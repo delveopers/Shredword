@@ -1,3 +1,14 @@
+/**
+  @file hash.h
+  @brief Hash map implementations for storing encoder/decoder mappings in BPE tokenization
+
+  * This file provides hash map data structures and functions for:
+  * - Regular hash maps (byte keys -> rank values) for token encoding
+  * - String hash maps (string keys -> rank values) for special token encoding  
+  * - Reverse maps (rank keys -> byte values) for token decoding
+  * Used internally by the CoreBPE tokenizer for fast token lookup and conversion.
+*/
+
 #ifndef __HASH__H__
 #define __HASH__H__
 
@@ -47,12 +58,21 @@ typedef struct {
   size_t size;
 } ReverseMap;
 
-typedef ShredError ShredError; // forward declaration
+typedef enum {
+  OK = 0,
+  ERROR_NULL_POINTER = -1,
+  ERROR_MEMORY_ALLOCATION = -2,
+  ERROR_INVALID_TOKEN = -3,
+  ERROR_REGEX_COMPILE = -4,
+  ERROR_REGEX_MATCH = -5,
+  ERROR_INVALID_UTF8 = -6
+} ShredError;
 
 extern "C" {
   HashMap* hashmap_new(size_t bucket_count);
   void hashmap_free(HashMap* map);
   bool hashmap_get(HashMap* map, const uint8_t* key, size_t key_len, Rank* value);
+  ShredError hashmap_insert(HashMap* map, const uint8_t* key, size_t key_len, Rank value);
   HashMapStr* hashmap_str_new(size_t bucket_count);
   void hashmap_str_free(HashMapStr* map);
   bool hashmap_str_get(HashMapStr* map, const char* key, Rank* value);

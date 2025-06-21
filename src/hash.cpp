@@ -23,16 +23,16 @@ static uint32_t fnv1a_hash_str(const char* str) {
 // Hash map implementation
 HashMap* hashmap_new(size_t bucket_count) {
   if (bucket_count == 0) bucket_count = 1024;
-  
-  HashMap* map = malloc(sizeof(HashMap));
+
+  HashMap* map = (HashMap*)malloc(sizeof(HashMap));
   if (!map) return NULL;
-  
-  map->buckets = calloc(bucket_count, sizeof(HashMapNode*));
+
+  map->buckets = (HashMapNode**)calloc(bucket_count, sizeof(HashMapNode*));
   if (!map->buckets) {
     free(map);
     return NULL;
   }
-  
+
   map->bucket_count = bucket_count;
   map->size = 0;
   return map;
@@ -76,16 +76,15 @@ bool hashmap_get(HashMap* map, const uint8_t* key, size_t key_len, Rank* value) 
 // String hash map implementation
 HashMapStr* hashmap_str_new(size_t bucket_count) {
   if (bucket_count == 0) bucket_count = 256;
-  
+
   HashMapStr* map = (HashMapStr*)malloc(sizeof(HashMapStr));
   if (!map) return NULL;
-  
-  map->buckets = calloc(bucket_count, sizeof(HashMapStrNode*));
+  map->buckets = (HashMapStrNode**)calloc(bucket_count, sizeof(HashMapStrNode*));
   if (!map->buckets) {
     free(map);
     return NULL;
   }
-  
+
   map->bucket_count = bucket_count;
   map->size = 0;
   return map;
@@ -130,15 +129,15 @@ bool hashmap_str_get(HashMapStr* map, const char* key, Rank* value) {
 ReverseMap* reverse_map_new(size_t bucket_count) {
   if (bucket_count == 0) bucket_count = 1024;
   
-  ReverseMap* map = malloc(sizeof(ReverseMap));
+  ReverseMap* map = (ReverseMap*)malloc(sizeof(ReverseMap));
   if (!map) return NULL;
-  
-  map->buckets = calloc(bucket_count, sizeof(ReverseMapNode*));
+
+  map->buckets = (ReverseMapNode**)calloc(bucket_count, sizeof(ReverseMapNode*));
   if (!map->buckets) {
     free(map);
     return NULL;
   }
-  
+
   map->bucket_count = bucket_count;
   map->size = 0;
   return map;
@@ -199,12 +198,12 @@ ShredError hashmap_insert(HashMap* map, const uint8_t* key, size_t key_len, Rank
   node = (HashMapNode*)malloc(sizeof(HashMapNode));
   if (!node) return ERROR_MEMORY_ALLOCATION;
 
-  node->key = malloc(key_len);
+  node->key = (uint8_t*)malloc(key_len);
   if (!node->key) {
     free(node);
     return ERROR_MEMORY_ALLOCATION;
   }
-  
+
   memcpy(node->key, key, key_len);
   node->key_len = key_len;
   node->value = value;
@@ -259,7 +258,7 @@ ShredError reverse_map_insert(ReverseMap* map, Rank key, const uint8_t* value, s
   while (node) {
     if (node->key == key) {
       free(node->value);
-      node->value = malloc(value_len);
+      node->value = (uint8_t*)malloc(value_len);
       if (!node->value) return ERROR_MEMORY_ALLOCATION;
       memcpy(node->value, value, value_len);
       node->value_len = value_len;
@@ -271,13 +270,13 @@ ShredError reverse_map_insert(ReverseMap* map, Rank key, const uint8_t* value, s
   // Create new node
   node = (ReverseMapNode*)malloc(sizeof(ReverseMapNode));
   if (!node) return ERROR_MEMORY_ALLOCATION;
-  
-  node->value = malloc(value_len);
+
+  node->value = (uint8_t*)malloc(value_len);
   if (!node->value) {
     free(node);
     return ERROR_MEMORY_ALLOCATION;
   }
-  
+
   memcpy(node->value, value, value_len);
   node->key = key;
   node->value_len = value_len;
