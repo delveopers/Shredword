@@ -18,9 +18,10 @@ class Shred:
 
   def _download_vocab(self, encoding_name: str) -> Dict:
     base_urls = [
+      f"https://raw.githubusercontent.com/delveopers/shredword/main/vocabs/{encoding_name}.model",
       f"https://raw.githubusercontent.com/delveopers/shredword/dev/vocabs/{encoding_name}.model"
     ]
-    
+
     for url in base_urls:
       try:
         with urllib.request.urlopen(url) as response:
@@ -116,10 +117,20 @@ class Shred:
     try:
       text_bytes = text.encode('utf-8')
       if allowed_special:
-        special_array = (c_char_p * len(allowed_special))()
-        for i, s in enumerate(allowed_special):
-          special_array[i] = s.encode('utf-8')
-        error = lib.encode(self.bpe, text_bytes, special_array, len(allowed_special), token_array)
+        if allowed_special == "all":
+          special_list = list(self._special_tokens.keys())
+        elif isinstance(allowed_special, str):
+          special_list = [allowed_special]
+        else:
+          special_list = allowed_special
+        
+        if special_list:
+          special_array = (c_char_p * len(special_list))()
+          for i, s in enumerate(special_list):
+            special_array[i] = s.encode('utf-8')
+          error = lib.encode(self.bpe, text_bytes, special_array, len(special_list), token_array)
+        else:
+          error = lib.encode_ordinary(self.bpe, text_bytes, token_array)
       else:
         error = lib.encode_ordinary(self.bpe, text_bytes, token_array)
       
