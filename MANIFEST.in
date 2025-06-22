@@ -1,0 +1,34 @@
+# Include the license and readme
+include LICENSE
+include README.md
+
+# Include all Python files from shred directory
+recursive-include shred *.py
+
+# Include all pre-compiled libraries from shred directory
+recursive-include shred/lib *.so
+recursive-include shred/lib *.dll
+recursive-include shred/lib *.dylib
+recursive-include shred/lib *.pyd
+
+# Include any additional data files in shred directory
+recursive-include shred *.txt
+recursive-include shred *.json
+recursive-include shred *.yaml
+recursive-include shred *.yml
+
+# Include test files
+recursive-include tests *.py
+
+# Exclude build artifacts and cache
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude __pycache__
+global-exclude .DS_Store
+global-exclude *.so.dSYM
+global-exclude .git*
+global-exclude *.egg-info/*
+
+# Include project configuration
+include pyproject.toml
+include setup.cfg
