@@ -1,478 +1,242 @@
-"""
-  @file core.py
-  @brief High-level Python interface for ShredBPE tokenizer with SentencePiece integration
+import urllib.request, re
+from typing import List, Dict, Optional, Union
+from .cbase import lib, create_token_array, create_byte_array, create_encode_unstable_result, check_error
+from ctypes import *
 
-  * This module provides a clean, Pythonic interface to the ShredBPE tokenizer,
-  handling memory management, error checking, and type conversions automatically.
-  * Now includes direct loading from SentencePiece-trained vocabularies.
-"""
+BASIC_REGEX = r"\s*[a-zA-Z0-9]+|\s+|[^\s\w]+"
 
-from typing import List, Dict, Optional, Tuple, Union
-import json, base64, requests
-from pathlib import Path
-from ctypes import byref, POINTER, c_size_t
-from cbase import *
-
-class ShredBPEError(Exception):
-  """Exception raised by ShredBPE operations"""
-
-  ERROR_MESSAGES = {
-    ShredError.ERROR_NULL_POINTER: "Null pointer error",
-    ShredError.ERROR_MEMORY_ALLOCATION: "Memory allocation failed",
-    ShredError.ERROR_INVALID_TOKEN: "Invalid token",
-    ShredError.ERROR_REGEX_COMPILE: "Regex compilation failed",
-    ShredError.ERROR_REGEX_MATCH: "Regex match failed",
-    ShredError.ERROR_INVALID_UTF8: "Invalid UTF-8 encoding"
-  }
-  
-  def __init__(self, error_code: int, message: str = None):
-    self.error_code = error_code
-    if message is None:
-      message = self.ERROR_MESSAGES.get(error_code, f"Unknown error code: {error_code}")
-    super().__init__(message)
-
-class CompletionResult:
-  """Represents completion possibilities for partial tokenization"""
-
-  def __init__(self, tokens: List[int], completions: List[List[int]]):
-    self.tokens = tokens
-    self.completions = completions
-
-  def __repr__(self):
-    return f"CompletionResult(tokens={self.tokens}, completions={len(self.completions)} possibilities)"
-
-DEFAULT_REGEX = r"'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"
-DEFAULT_REPO_URL = "https://raw.githubusercontent.com/delveopers/shredword/main/vocabs"
-  
 class Shred:
-  """High-level Python interface to ShredBPE tokenizer with SentencePiece support"""
-
   def __init__(self):
-    """Initialize the tokenizer interface"""
-    self._interface = ShredBPEInterface(None)
-    self._bpe_ptr = None
-    self._is_initialized = False
-    self.repo_url = DEFAULT_REPO_URL
+    self.bpe, self._vocab, self._special_tokens = None, [], {}
+    self._encoder, self._decoder, self._encoder_buffers = {}, {}, []
 
-  def load_from_encoding(self, encoding_name: str, pattern: str = DEFAULT_REGEX) -> None:
-    """Load vocabulary from vocab file by encoding name (no SentencePiece dependency)
+  def load_from_encoding(self, encoding_name: str):
+    vocab_data = self._download_vocab(encoding_name)
+    self._vocab, self._special_tokens = vocab_data['vocab'], vocab_data.get('special_tokens', {})
+    self._build_mappings()
+    self._initialize_bpe(vocab_data.get('pattern', BASIC_REGEX))
 
-    Args:
-      encoding_name: Name of the encoding (e.g., 'base_50k', 'ava_v1', 'pre_16k')
-      pattern: Regex pattern for text preprocessing
-    """
-    vocab_url = f"{self.repo_url}/{encoding_name}.vocab"
-    try:
-      # Download the vocab file
-      vocab_response = requests.get(vocab_url, timeout=30)
-      vocab_response.raise_for_status()
-      vocab_text = vocab_response.text
-      encoder_data, special_tokens = self._parse_vocab_file(vocab_text) # Parse the vocab file
-      self.load_vocab(encoder_data, special_tokens, pattern)  # Load vocabulary into the tokenizer
+  def _download_vocab(self, encoding_name: str) -> Dict:
+    base_urls = [
+      f"https://raw.githubusercontent.com/delveopers/shredword/main/vocabs/{encoding_name}.model",
+      f"https://raw.githubusercontent.com/delveopers/shredword/dev/vocabs/{encoding_name}.model"
+    ]
 
-    except requests.RequestException as e:
-      raise ShredBPEError(ShredError.ERROR_MEMORY_ALLOCATION, f"Failed to download vocab from {vocab_url}: {e}")
-    except Exception as e:
-      raise ShredBPEError(ShredError.ERROR_MEMORY_ALLOCATION, f"Failed to parse vocab file: {e}")
-
-  def _parse_vocab_file(self, vocab_text: str) -> Tuple[Dict[bytes, int], Dict[str, int]]:
-    """Parse SentencePiece vocab file format
-    
-    Args:
-      vocab_text: Content of the .vocab file
-      
-    Returns:
-      Tuple of (encoder_data, special_tokens)
-    """
-    encoder_data, special_tokens = {}, {}
-    for line_num, line in enumerate(vocab_text.strip().split('\n')):
-      line = line.strip()
-      if not line: continue
-      # Split on tab - vocab files have format: "piece\tscore"
-      parts = line.split('\t')
-      if len(parts) < 2: continue
-      piece, token_id = parts[0], line_num
+    for url in base_urls:
       try:
-        # Handle special tokens (those starting with < and ending with >)
-        if piece.startswith('<') and piece.endswith('>'):
-          special_tokens[piece] = token_id
-        elif piece.startswith('▁'):
-          # SentencePiece uses ▁ to represent spaces
-          actual_piece = piece.replace('▁', ' ')
-          encoder_data[actual_piece.encode('utf-8')] = token_id
-        else:
-          # Handle byte-level tokens
-          if piece.startswith('<0x') and piece.endswith('>'):
-            # Byte token format like <0x20>
-            hex_val = piece[3:-1]
-            byte_val = bytes([int(hex_val, 16)])
-            encoder_data[byte_val] = token_id
-          else:
-            # Regular token - encode as UTF-8 bytes
-            encoder_data[piece.encode('utf-8')] = token_id
-      except (ValueError, UnicodeEncodeError):
-        # Fallback for problematic tokens
+        with urllib.request.urlopen(url) as response:
+          return self._parse_model_file(response.read(), encoding_name)
+      except: continue
+    raise ValueError(f"Failed to load encoding '{encoding_name}' from any source")
+
+  def _build_mappings(self):
+    self._encoder, self._decoder = {}, {}
+    
+    for i, token in enumerate(self._vocab):
+      if not token: continue
+      
+      if token.startswith('<0x') and token.endswith('>') and len(token) == 6:
         try:
-          encoder_data[piece.encode('utf-8', errors='replace')] = token_id
-        except:
-          # Skip tokens that can't be processed
-          continue    
-    return encoder_data, special_tokens
-
-  def load_vocab(self, encoder_data: Dict[bytes, int], special_tokens: Optional[Dict[str, int]] = None, pattern: str = DEFAULT_REGEX) -> None:
-    """Load vocabulary and initialize the tokenizer
-
-    Args:
-      encoder_data: Dictionary mapping byte sequences to token ranks
-      special_tokens: Dictionary mapping special token strings to ranks
-      pattern: Regex pattern for text preprocessing
-    """
-    if self._is_initialized: self.cleanup()
-
-    # Prepare encoder data
-    encoder_keys, encoder_key_lens, encoder_values = [], [], []
-    for byte_seq, rank in encoder_data.items():
-      if isinstance(byte_seq, str):
-        byte_seq = byte_seq.encode('utf-8')
-      encoder_keys.append(byte_seq)
-      encoder_key_lens.append(len(byte_seq))
-      encoder_values.append(rank)
-    # Convert to C arrays
-    c_encoder_keys = []
-    for key in encoder_keys:
-      c_key, _ = create_byte_array_from_bytes(key)
-      c_encoder_keys.append(c_key)
-    # Create array of pointers
-    array_type = POINTER(c_uint8) * len(c_encoder_keys)
-    c_keys_array = array_type(*c_encoder_keys)    
-    c_key_lens, c_values = create_size_array(encoder_key_lens), create_rank_array(encoder_values)
-
-    # Prepare special tokens
-    c_special_keys, c_special_values, special_count = None, None, 0
-    if special_tokens:
-      special_keys_list = list(special_tokens.keys())
-      special_values_list = list(special_tokens.values())
-      c_special_keys = create_string_array(special_keys_list)
-      c_special_values = create_rank_array(special_values_list)
-      special_count = len(special_tokens)
-
-    # Initialize the BPE
-    pattern_bytes = pattern.encode('utf-8') if isinstance(pattern, str) else pattern
-    self._bpe_ptr = self._interface.lib.shred_new(c_keys_array, c_key_lens, c_values, len(encoder_data), c_special_keys, c_special_values, special_count, pattern_bytes)
-    if not self._bpe_ptr:
-      raise ShredBPEError(ShredError.ERROR_MEMORY_ALLOCATION, "Failed to initialize ShredBPE")
-    self._is_initialized = True
-  
-  def load_from_file(self, vocab_file: Union[str, Path]) -> None:
-    """Load vocabulary from a JSON file
-
-    Expected format:
-    {
-      "encoder": {"base64_bytes": rank, ...},
-      "special_tokens": {"token_string": rank, ...},
-      "pattern": "regex_pattern"
-    }
-
-    Args:
-      vocab_file: Path to the vocabulary JSON file
-    """
-    vocab_path = Path(vocab_file)
-    if not vocab_path.exists():
-      raise FileNotFoundError(f"Vocabulary file not found: {vocab_path}")
-    
-    with open(vocab_path, 'r', encoding='utf-8') as f:
-      vocab_data = json.load(f)
-    
-    # Decode base64 encoded byte sequences
-    encoder_data = {}
-    for b64_key, rank in vocab_data.get("encoder", {}).items():
-      try:
-        byte_key = base64.b64decode(b64_key)
-        encoder_data[byte_key] = rank
-      except Exception:
-        # Fallback: treat as UTF-8 string
-        encoder_data[b64_key.encode('utf-8')] = rank
-    
-    special_tokens = vocab_data.get("special_tokens", {})
-    pattern = vocab_data.get("pattern", DEFAULT_REGEX)
-    self.load_vocab(encoder_data, special_tokens, pattern)
-  
-  def encode(self, text: str, allowed_special: Optional[List[str]] = None) -> List[int]:
-    """Encode text into tokens
-    
-    Args:
-      text: Input text to encode
-      allowed_special: List of special tokens that are allowed (None = all allowed)
-    
-    Returns:
-      List of token IDs
-    """
-    self._check_initialized()    
-    # Create token array
-    token_array = self._interface.lib.token_array_new(1024)
-    if not token_array:
-      raise ShredBPEError(ShredError.ERROR_MEMORY_ALLOCATION)
-
-    try:
-      text_bytes = text.encode('utf-8')
-      if allowed_special is None:
-        # Use encode_ordinary for no special tokens
-        result = self._interface.lib.encode_ordinary(self._bpe_ptr, text_bytes, token_array)
+          byte_val = int(token[3:5], 16)
+          token_bytes = bytes([byte_val])
+          self._encoder[token_bytes] = i
+          self._decoder[i] = token_bytes
+        except ValueError: continue
+      elif token.startswith('<') and token.endswith('>'):
+        continue
       else:
-        # Use encode with allowed special tokens
-        c_allowed = create_string_array(allowed_special) if allowed_special else None
-        allowed_count = len(allowed_special) if allowed_special else 0
-        result = self._interface.lib.encode(self._bpe_ptr, text_bytes, c_allowed, allowed_count, token_array)
-      
-      if result != ShredError.OK:
-        raise ShredBPEError(result)
+        try:
+          token_bytes = token.encode('utf-8')
+          if len(token_bytes) > 0:
+            self._encoder[token_bytes] = i
+            self._decoder[i] = token_bytes
+        except UnicodeEncodeError: continue
 
-      # Extract tokens
-      tokens = tokens_from_c_array(token_array.contents.tokens, token_array.contents.count)
-      return tokens
-
-    finally:
-      self._interface.lib.token_array_free(token_array)
-  
-  def encode_ordinary(self, text: str) -> List[int]:
-    """Encode text without processing special tokens
-    
-    Args:
-      text: Input text to encode
-    
-    Returns:
-      List of token IDs
-    """
-    return self.encode(text, allowed_special=[])
-  
-  def encode_bytes(self, data: bytes) -> List[int]:
-    """Encode raw bytes into tokens
-    
-    Args:
-      data: Raw bytes to encode
-    
-    Returns:
-      List of token IDs
-    """
-    self._check_initialized()
-    
-    token_array = self._interface.lib.token_array_new(1024)
-    if not token_array:
-      raise ShredBPEError(ShredError.ERROR_MEMORY_ALLOCATION)
-    
+  def _parse_model_file(self, content: bytes, encoding_name: str) -> Dict:
     try:
-      c_bytes, byte_len = create_byte_array_from_bytes(data)
-      result = self._interface.lib.encode_bytes(self._bpe_ptr, c_bytes, byte_len, token_array)
-      if result != ShredError.OK:
-        raise ShredBPEError(result)
+      import json
+      text_content = content.decode('utf-8')
+      vocab_dict = json.loads(text_content)
       
-      tokens = tokens_from_c_array(token_array.contents.tokens, token_array.contents.count)
-      return tokens
+      max_rank = max(vocab_dict.values()) if vocab_dict else 0
+      vocab_list = [''] * (max_rank + 1)
       
-    finally:
-      self._interface.lib.token_array_free(token_array)
-  
-  def encode_with_completions(self, text: str, allowed_special: Optional[List[str]] = None) -> CompletionResult:
-    """Encode text and get possible completions for partial tokenization
-    
-    Args:
-      text: Input text to encode
-      allowed_special: List of special tokens that are allowed
-    
-    Returns:
-      CompletionResult with tokens and possible completions
-    """
-    self._check_initialized()
-    
-    unstable_result = self._interface.lib.encode_unstable_result_new()
-    if not unstable_result:
-      raise ShredBPEError(ShredError.ERROR_MEMORY_ALLOCATION)
+      for token_str, rank in vocab_dict.items():
+        clean_token = token_str.strip('"\'')
+        if 0 <= rank <= max_rank:
+          vocab_list[rank] = clean_token
+      
+      special_tokens = {}
+      for token_str, rank in vocab_dict.items():
+        clean_token = token_str.strip('"\'')
+        if clean_token.startswith('<') and clean_token.endswith('>') and not clean_token.startswith('<0x'):
+          special_tokens[clean_token] = rank
+      
+      return {'vocab': vocab_list, 'special_tokens': special_tokens, 'pattern': BASIC_REGEX}
+    except Exception as e:
+      raise ValueError(f"Unable to parse model file for encoding '{encoding_name}': {e}")
 
+  def _initialize_bpe(self, pattern: str):
+    if not self._encoder: raise RuntimeError("Encoder not built")
+
+    sorted_items = sorted(self._encoder.items(), key=lambda x: x[1])
+    self._encoder_buffers = []
+    
+    encoder_keys = (POINTER(c_uint8) * len(sorted_items))()
+    encoder_key_lens = (c_size_t * len(sorted_items))()
+    encoder_values = (c_uint32 * len(sorted_items))()
+
+    for i, (token_bytes, rank) in enumerate(sorted_items):
+      buffer = create_string_buffer(token_bytes)
+      self._encoder_buffers.append(buffer)
+      encoder_keys[i] = cast(buffer, POINTER(c_uint8))
+      encoder_key_lens[i] = len(token_bytes)
+      encoder_values[i] = rank
+
+    special_count = len(self._special_tokens)
+    if special_count > 0:
+      special_keys = (c_char_p * special_count)()
+      special_values = (c_uint32 * special_count)()
+      for i, (token, rank) in enumerate(self._special_tokens.items()):
+        special_keys[i] = token.encode('utf-8')
+        special_values[i] = rank
+    else:
+      special_keys, special_values = None, None
+
+    pattern_buf = create_string_buffer(pattern.encode('utf-8'))
+    self.bpe = lib.shred_new(encoder_keys, encoder_key_lens, encoder_values, len(sorted_items), special_keys, special_values, special_count, pattern_buf)
+    
+    if not self.bpe: raise RuntimeError("shred_new returned NULL")
+
+  def encode(self, text: str, allowed_special: Optional[List[str]] = None) -> List[int]:
+    if not self.bpe: raise RuntimeError("Tokenizer not initialized")
+    
+    token_array = create_token_array(lib)
+    if not token_array: raise RuntimeError("Failed to create token array")
+    
     try:
       text_bytes = text.encode('utf-8')
-      c_allowed = create_string_array(allowed_special) if allowed_special else None
-      allowed_count = len(allowed_special) if allowed_special else 0
-      result = self._interface.lib.encode_with_unstable(self._bpe_ptr, text_bytes, c_allowed, allowed_count, unstable_result)
-
-      if result != ShredError.OK:
-        raise ShredBPEError(result)
+      if allowed_special:
+        if allowed_special == "all":
+          special_list = list(self._special_tokens.keys())
+        elif isinstance(allowed_special, str):
+          special_list = [allowed_special]
+        else:
+          special_list = allowed_special
+        
+        if special_list:
+          special_array = (c_char_p * len(special_list))()
+          for i, s in enumerate(special_list):
+            special_array[i] = s.encode('utf-8')
+          error = lib.encode(self.bpe, text_bytes, special_array, len(special_list), token_array)
+        else:
+          error = lib.encode_ordinary(self.bpe, text_bytes, token_array)
+      else:
+        error = lib.encode_ordinary(self.bpe, text_bytes, token_array)
       
-      # Extract main tokens
-      main_tokens = tokens_from_c_array(unstable_result.contents.tokens.tokens, unstable_result.contents.tokens.count)
-      
-      # Extract completions
-      completions = []
-      completion_set = unstable_result.contents.completions
-      for i in range(completion_set.count):
-        completion_array = completion_set.completions[i]
-        completion_tokens = tokens_from_c_array(completion_array.contents.tokens, completion_array.contents.count)
-        completions.append(completion_tokens)
-
-      return CompletionResult(main_tokens, completions)
-      
+      check_error(error)
+      return [token_array.contents.tokens[i] for i in range(token_array.contents.count)]
+    except:
+      return self._fallback_encode(text)
     finally:
-      self._interface.lib.encode_unstable_result_free(unstable_result)
-  
-  def decode(self, tokens: List[int]) -> str:
-    """Decode tokens back to text
+      if token_array: lib.token_array_free(token_array)
+
+  def encode_ordinary(self, text: str) -> List[int]:
+    if not self.bpe: raise RuntimeError("Tokenizer not initialized")
     
-    Args:
-      tokens: List of token IDs to decode
+    token_array = create_token_array(lib)
+    if not token_array: raise RuntimeError("Failed to create token array")
     
-    Returns:
-      Decoded text string
-    """
-    raw_bytes = self.decode_bytes(tokens)
     try:
-      return raw_bytes.decode('utf-8')
-    except UnicodeDecodeError as e:
-      raise ShredBPEError(ShredError.ERROR_INVALID_UTF8, f"Invalid UTF-8 in decoded bytes: {e}")
-  
-  def decode_bytes(self, tokens: List[int]) -> bytes:
-    """Decode tokens to raw bytes
-    
-    Args:
-      tokens: List of token IDs to decode
-    
-    Returns:
-      Raw decoded bytes
-    """
-    self._check_initialized()
-
-    byte_array = self._interface.lib.byte_array_new(1024)
-    if not byte_array:
-      raise ShredBPEError(ShredError.ERROR_MEMORY_ALLOCATION)
-
-    try:
-      c_tokens = create_rank_array(tokens)
-      result = self._interface.lib.decode_bytes(self._bpe_ptr, c_tokens, len(tokens), byte_array)
-
-      if result != ShredError.OK:
-        raise ShredBPEError(result)
-
-      decoded_bytes = bytes_from_c_array(byte_array.contents.bytes, byte_array.contents.len)
-      return decoded_bytes
-
+      text_bytes = text.encode('utf-8')
+      error = lib.encode_ordinary(self.bpe, text_bytes, token_array)
+      check_error(error)
+      return [token_array.contents.tokens[i] for i in range(token_array.contents.count)]
+    except:
+      return self._fallback_encode(text)
     finally:
-      self._interface.lib.byte_array_free(byte_array)
-  
-  def decode_single_token(self, token: int) -> bytes:
-    """Decode a single token to bytes
-    
-    Args:
-      token: Token ID to decode
-    
-    Returns:
-      Raw bytes for the token
-    """
-    self._check_initialized()
-    byte_array = self._interface.lib.byte_array_new(256)
-    if not byte_array:
-      raise ShredBPEError(ShredError.ERROR_MEMORY_ALLOCATION)
+      if token_array: lib.token_array_free(token_array)
 
-    try:
-      result = self._interface.lib.decode_single_token_bytes(self._bpe_ptr, token, byte_array)
-      if result != ShredError.OK:
-        raise ShredBPEError(result)      
-      decoded_bytes = bytes_from_c_array(byte_array.contents.bytes, byte_array.contents.len)
-      return decoded_bytes
-
-    finally:
-      self._interface.lib.byte_array_free(byte_array)
-  
-  def encode_single_token(self, piece: Union[str, bytes]) -> int:
-    """Encode a single piece to its token ID
-    
-    Args:
-      piece: Text piece or bytes to encode to a single token
-    
-    Returns:
-      Token ID
-    """
-    self._check_initialized()
-    
-    if isinstance(piece, str):
+  def _fallback_encode(self, text: str) -> List[int]:
+    import re
+    tokens = []
+    pieces = re.findall(BASIC_REGEX, text)
+    for piece in pieces:
       piece_bytes = piece.encode('utf-8')
-    else:
-      piece_bytes = piece
-    c_piece, piece_len = create_byte_array_from_bytes(piece_bytes)
-    token_rank = Rank()
+      if piece_bytes in self._encoder:
+        tokens.append(self._encoder[piece_bytes])
+      else:
+        for byte in piece_bytes:
+          byte_token = bytes([byte])
+          if byte_token in self._encoder:
+            tokens.append(self._encoder[byte_token])
+          else:
+            tokens.append(0)
+    return tokens
 
-    result = self._interface.lib.encode_single_token(self._bpe_ptr, c_piece, piece_len, byref(token_rank))
-    if result != ShredError.OK:
-      raise ShredBPEError(result)
-    return token_rank.value
-  
-  def get_vocab_size(self) -> int:
-    """Get the total number of tokens in the vocabulary
+  def decode(self, tokens: List[int]) -> str:
+    if not self.bpe:
+      raise RuntimeError("Tokenizer not initialized")
+    if not tokens:
+      return ""
     
-    Returns:
-      Number of tokens
-    """
-    self._check_initialized()
-    return self._interface.lib.get_token_count(self._bpe_ptr)
-  
-  def get_all_token_bytes(self) -> List[bytes]:
-    """Get byte representation of all tokens in the vocabulary
-    
-    Returns:
-      List of byte sequences for each token
-    """
-    self._check_initialized()
-    results_ptr = POINTER(POINTER(ByteArray))()
-    count = c_size_t()
-    result = self._interface.lib.get_token_byte_values(self._bpe_ptr, byref(results_ptr), byref(count))
-
-    if result != ShredError.OK:
-      raise ShredBPEError(result)
+    byte_array = create_byte_array(lib)
+    if not byte_array:
+      raise RuntimeError("Failed to create byte array")
     
     try:
-      token_bytes = []
-      for i in range(count.value):
-        byte_array = results_ptr[i]
-        token_byte = bytes_from_c_array(byte_array.contents.bytes, byte_array.contents.len)
-        token_bytes.append(token_byte)
-      return token_bytes
+      tokens_array = (c_uint32 * len(tokens))(*tokens)
+      error = lib.decode_bytes(self.bpe, tokens_array, len(tokens), byte_array)
+      check_error(error)
       
+      if byte_array.contents.len == 0:
+        return ""
+      
+      result_bytes = bytes([byte_array.contents.bytes[i] for i in range(byte_array.contents.len)])
+      return result_bytes.decode('utf-8', errors='replace')
     finally:
-      # Free the allocated memory
-      for i in range(count.value):
-        self._interface.lib.byte_array_free(results_ptr[i])
-  
-  def set_repo_url(self, repo_url: str) -> None:
-    """Update the repository URL for vocabulary loading
-    
-    Args:
-      repo_url: New base URL for vocabulary repository
-    """
-    self.repo_url = repo_url
-  
-  def _check_initialized(self):
-    """Check if the tokenizer is properly initialized"""
-    if not self._is_initialized or not self._bpe_ptr:
-      raise ShredBPEError(ShredError.ERROR_NULL_POINTER, "Tokenizer not initialized. Call load_vocab() or load_from_encoding() first.")
-  
-  def cleanup(self):
-    """Clean up resources"""
-    if self._bpe_ptr:
-      self._interface.lib.shred_free(self._bpe_ptr)
-      self._bpe_ptr = None
-    self._is_initialized = False
-  
+      if byte_array:
+        lib.byte_array_free(byte_array)
+
+  def encode_with_unstable(self, text: str, allowed_special: Optional[List[str]] = None):
+    if not self.bpe:
+      raise RuntimeError("Tokenizer not initialized")
+    result = create_encode_unstable_result(lib)
+    try:
+      if allowed_special:
+        special_array = (c_char_p * len(allowed_special))(*[s.encode('utf-8') for s in allowed_special])
+        error = lib.encode_with_unstable(self.bpe, text.encode('utf-8'), special_array, len(allowed_special), result)
+      else:
+        error = lib.encode_with_unstable(self.bpe, text.encode('utf-8'), None, 0, result)
+      check_error(error)
+      tokens = [result.contents.tokens.tokens[i] for i in range(result.contents.tokens.count)]
+      completions = []
+      for i in range(result.contents.completions.count):
+        comp = result.contents.completions.completions[i]
+        completions.append([comp.contents.tokens[j] for j in range(comp.contents.count)])
+      return {'tokens': tokens, 'completions': completions}
+    finally:
+      lib.encode_unstable_result_free(result)
+
+  @property
+  def vocab_size(self) -> int: return len(self._vocab)
+
+  @property
+  def special_tokens(self) -> Dict[str, int]: return self._special_tokens.copy()
+
+  @property
+  def vocab(self) -> List[str]: return self._vocab.copy()
+
+  @property
+  def encoder(self) -> Dict[bytes, int]: return self._encoder.copy()
+
+  @property
+  def decoder(self) -> Dict[int, bytes]: return self._decoder.copy()
+
   def __del__(self):
-    """Destructor to ensure cleanup"""
-    self.cleanup()
+    if self.bpe: lib.shred_free(self.bpe)
 
-# Convenience function for quick initialization
-def load_encoding(encoding_name: str) -> 'Shred':
-  """Convenience function to quickly load a tokenizer with vocab file (no SentencePiece dependency)
-  
-  Args:
-    encoding_name: Name of the encoding (e.g., 'base_50k', 'ava_v1', 'pre_16k')
-
-  Returns:
-    Initialized Shred tokenizer instance
-  """
-  tokenizer = Shred(None, None)
+def load_encoding(encoding_name: str) -> Shred:
+  tokenizer = Shred()
   tokenizer.load_from_encoding(encoding_name)
   return tokenizer
