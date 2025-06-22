@@ -7,7 +7,7 @@
 *.o
 *.obj
 
-shred/inc/
+shred/lib/
 
 # Precompiled Headers
 *.gch
