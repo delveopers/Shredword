@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "shredword"
-version = "0.0.1"
+version = "0.0.5"
 description = "fast bpe tokenizer used for experimental models"
 readme = "README.md"
 license = {file = "LICENSE"}
