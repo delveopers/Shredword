@@ -1,68 +1,55 @@
-import ctypes, os, platform
-from ctypes import *
+import ctypes, os, sys, platform, sysconfig
+from ctypes import Structure, c_float, c_double, c_int, c_int8, c_int16, c_int32, c_int64, c_uint8, c_uint16, c_uint32, c_uint64, c_size_t, c_void_p, c_char_p, POINTER
+from typing import *
 
-Rank = c_uint32
+def _get_lib_path():
+  pkg_dir = os.path.dirname(__file__)
+  possible_names = ['token', 'libtoken', 'tokenizer', 'libtokenizer']
+  possible_exts = ['.pyd', '.dll', '.so', '.dylib', sysconfig.get_config_var('EXT_SUFFIX') or '']
+  search_dirs = [pkg_dir, os.path.join(pkg_dir, 'lib'), os.path.join(pkg_dir, '..', 'build')]
+  
+  for search_dir in search_dirs:
+    if not os.path.exists(search_dir): continue
+    for root, dirs, files in os.walk(search_dir):
+      for file in files:
+        for name in possible_names:
+          if file.startswith(name) and any(file.endswith(ext) for ext in possible_exts if ext):
+            return os.path.join(root, file)  
+  raise FileNotFoundError(f"Could not find tokenizer library in {search_dirs}. Available files: {[f for d in search_dirs if os.path.exists(d) for f in os.listdir(d)]}")
 
-if platform.system() == 'Windows':
-  lib_path = os.path.join(os.path.dirname(__file__), 'lib/libtoken.dll')
-  lib = ctypes.CDLL(lib_path, winmode=0)
-else:
-  lib_path = os.path.join(os.path.dirname(__file__), 'lib/libtoken.so')
-  lib = ctypes.CDLL(lib_path)
+lib = ctypes.CDLL(_get_lib_path(), winmode=0)
 
 class ShredError:
   OK, ERROR_NULL_POINTER, ERROR_MEMORY_ALLOCATION = 0, -1, -2
   ERROR_INVALID_TOKEN, ERROR_REGEX_COMPILE, ERROR_REGEX_MATCH, ERROR_INVALID_UTF8 = -3, -4, -5, -6
 
-class TokenArray(Structure): _fields_ = [("tokens", POINTER(Rank)), ("count", c_size_t), ("capacity", c_size_t)]
-class CompletionSet(Structure): _fields_ = [("completions", POINTER(POINTER(TokenArray))), ("count", c_size_t), ("capacity", c_size_t)]
-class EncodeUnstableResult(Structure): _fields_ = [("tokens", TokenArray), ("completions", CompletionSet)]
-class ByteArray(Structure): _fields_ = [("bytes", POINTER(c_uint8)), ("len", c_size_t)]
-class CoreBPE(Structure): _fields_ = [("encoder", c_void_p), ("special_tokens_encoder", c_void_p), ("decoder", c_void_p), ("special_tokens_decoder", c_void_p), ("regex", c_void_p), ("special_regex", c_void_p), ("sorted_token_bytes", c_void_p)]
+class Rank(ctypes.Union): _fields_ = [("value", c_uint32)]
+class TokenArray(Structure): _fields_ = [("tokens", POINTER(c_uint32)), ("count", c_size_t), ("capacity", c_size_t)]
+class CompletionSet(Structure):  _fields_ = [("completions", POINTER(POINTER(TokenArray))), ("count", c_size_t), ("capacity", c_size_t)]
+class EncodeUnstableResult(Structure):  _fields_ = [("tokens", TokenArray), ("completions", CompletionSet)]
+class ByteArray(Structure):  _fields_ = [("bytes", POINTER(c_uint8)), ("len", c_size_t)]
+class CoreBPE(Structure):  _fields_ = [("encoder", c_void_p), ("special_tokens_encoder", c_void_p), ("decoder", c_void_p), ("special_tokens_decoder", c_void_p), ("regex", c_void_p), ("special_regex", c_void_p), ("sorted_token_bytes", c_void_p)]
 
-def setup_functions(lib):
-  lib.shred_new.argtypes = [POINTER(POINTER(c_uint8)), POINTER(c_size_t), POINTER(Rank), c_size_t, 
-                           POINTER(c_char_p), POINTER(Rank), c_size_t, c_char_p]
-  lib.shred_new.restype = POINTER(CoreBPE)
-  lib.shred_free.argtypes = [POINTER(CoreBPE)]
-  lib.shred_free.restype = None
+def _setup_func(name, argtypes, restype):
+  func = getattr(lib, name)
+  func.argtypes, func.restype = argtypes, restype
+  return func
 
-  for func in ['encode_ordinary', 'encode', 'encode_bytes']:
-    getattr(lib, func).restype = c_int
+_funcs = {
+  'shred_new': ([POINTER(POINTER(c_uint8)), POINTER(c_size_t), POINTER(c_uint32), c_size_t, POINTER(c_char_p), POINTER(c_uint32), c_size_t, c_char_p], POINTER(CoreBPE)),
+  'shred_free': ([POINTER(CoreBPE)], None), 'encode_ordinary': ([POINTER(CoreBPE), c_char_p, POINTER(TokenArray)], c_int),
+  'encode': ([POINTER(CoreBPE), c_char_p, POINTER(c_char_p), c_size_t, POINTER(TokenArray)], c_int), 'encode_bytes': ([POINTER(CoreBPE), POINTER(c_uint8), c_size_t, POINTER(TokenArray)], c_int),
+  'encode_single_token': ([POINTER(CoreBPE), POINTER(c_uint8), c_size_t, POINTER(c_uint32)], c_int), 'encode_with_unstable': ([POINTER(CoreBPE), c_char_p, POINTER(c_char_p), c_size_t, POINTER(EncodeUnstableResult)], c_int),
+  'encode_single_piece': ([POINTER(CoreBPE), POINTER(c_uint8), c_size_t, POINTER(TokenArray)], c_int), 'decode_bytes': ([POINTER(CoreBPE), POINTER(c_uint32), c_size_t, POINTER(ByteArray)], c_int),
+  'decode_single_token_bytes': ([POINTER(CoreBPE), c_uint32, POINTER(ByteArray)], c_int), 'get_token_count': ([POINTER(CoreBPE)], c_size_t),
+  'get_token_byte_values': ([POINTER(CoreBPE), POINTER(POINTER(ByteArray)), POINTER(c_size_t)], c_int), 'token_array_new': ([c_size_t], POINTER(TokenArray)),
+  'token_array_free': ([POINTER(TokenArray)], None), 'byte_array_new': ([c_size_t], POINTER(ByteArray)),
+  'byte_array_free': ([POINTER(ByteArray)], None), 'completion_set_new': ([c_size_t], POINTER(CompletionSet)),
+  'completion_set_free': ([POINTER(CompletionSet)], None), 'encode_unstable_result_new': ([], POINTER(EncodeUnstableResult)),
+  'encode_unstable_result_free': ([POINTER(EncodeUnstableResult)], None), 'token_array_push': ([POINTER(TokenArray), c_uint32], c_int),
+}
 
-  lib.encode_ordinary.argtypes = [POINTER(CoreBPE), c_char_p, POINTER(TokenArray)]
-  lib.encode.argtypes = [POINTER(CoreBPE), c_char_p, POINTER(c_char_p), c_size_t, POINTER(TokenArray)]
-  lib.encode_with_unstable.argtypes = [POINTER(CoreBPE), c_char_p, POINTER(c_char_p), c_size_t, POINTER(EncodeUnstableResult)]
-  lib.encode_with_unstable.restype = c_int
-  lib.encode_bytes.argtypes = [POINTER(CoreBPE), POINTER(c_uint8), c_size_t, POINTER(TokenArray)]
-  lib.encode_single_token.argtypes = [POINTER(CoreBPE), POINTER(c_uint8), c_size_t, POINTER(Rank)]
-  lib.encode_single_token.restype = c_int
-  lib.encode_single_piece.argtypes = [POINTER(CoreBPE), POINTER(c_uint8), c_size_t, POINTER(TokenArray)]
-  lib.encode_single_piece.restype = c_int
-
-  lib.decode_bytes.argtypes = [POINTER(CoreBPE), POINTER(Rank), c_size_t, POINTER(ByteArray)]
-  lib.decode_bytes.restype = c_int
-  lib.decode_single_token_bytes.argtypes = [POINTER(CoreBPE), Rank, POINTER(ByteArray)]
-  lib.decode_single_token_bytes.restype = c_int
-
-  lib.get_token_count.argtypes = [POINTER(CoreBPE)]
-  lib.get_token_count.restype = c_size_t
-  lib.get_token_byte_values.argtypes = [POINTER(CoreBPE), POINTER(POINTER(ByteArray)), POINTER(c_size_t)]
-  lib.get_token_byte_values.restype = c_int
-
-  for func in ['token_array_new', 'completion_set_new', 'encode_unstable_result_new', 'byte_array_new']:
-    getattr(lib, func).restype = c_void_p
-  
-  lib.token_array_new.argtypes = [c_size_t]
-  lib.completion_set_new.argtypes = [c_size_t]
-  lib.byte_array_new.argtypes = [c_size_t]
-  
-  for func in ['token_array_free', 'completion_set_free', 'encode_unstable_result_free', 'byte_array_free']:
-    getattr(lib, func).argtypes = [c_void_p]
-    getattr(lib, func).restype = None
-
-  lib.token_array_push.argtypes = [POINTER(TokenArray), Rank]
-  lib.token_array_push.restype = c_int
+for name, (argtypes, restype) in _funcs.items(): _setup_func(name, argtypes, restype)
 
 def create_token_array(lib, capacity=1000):
   return ctypes.cast(lib.token_array_new(capacity), POINTER(TokenArray))
@@ -78,5 +65,3 @@ def check_error(error_code):
     error_msgs = {ShredError.ERROR_NULL_POINTER: "Null pointer", ShredError.ERROR_MEMORY_ALLOCATION: "Memory allocation failed", ShredError.ERROR_INVALID_TOKEN: "Invalid token", 
                   ShredError.ERROR_REGEX_COMPILE: "Regex compilation failed", ShredError.ERROR_REGEX_MATCH: "Regex match failed", ShredError.ERROR_INVALID_UTF8: "Invalid UTF-8"}
     raise RuntimeError(f"CoreBPE error: {error_msgs.get(error_code, f'Unknown error {error_code}')}")
-
-setup_functions(lib)

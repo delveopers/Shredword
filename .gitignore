@@ -2,7 +2,7 @@ shred/lib/
 
 # Prerequisites
 *.d
-
+build/
 test.py
 extra.py
 
