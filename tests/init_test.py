@@ -5,7 +5,7 @@ def test_basic_encoding():
   print("=== Basic Encoding Test ===")
 
   # Load tokenizer from encoding name
-  tokenizer = load_encoding("pre_25k")
+  tokenizer = load_encoding("base_50k")
   test_text = "Hello world! This is a test of the ShredBPE tokenizer."
   print(f"Original text: {test_text}")
   
