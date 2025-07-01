@@ -1,10 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
 
-# Force Ninja generator on Windows
-if(WIN32)
-  set(CMAKE_GENERATOR "Ninja" CACHE INTERNAL "")
-endif()
-
 project(shred LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -27,31 +22,24 @@ if(NOT SRC_FILES)
   message(FATAL_ERROR "No source files found in src/")
 endif()
 
-# Create the shared library with correct name
-add_library(shred SHARED ${SRC_FILES})
-target_link_libraries(shred PRIVATE Python::Module)
+# Create the shared library
+add_library(tokenizer SHARED ${SRC_FILES})
+target_link_libraries(tokenizer PRIVATE Python::Module)
 
 # Link regex library on Windows with MinGW
 if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-  target_link_libraries(shred PRIVATE regex)
+  target_link_libraries(tokenizer PRIVATE regex)
 endif()
 
 # Set proper output name and properties
 if(WIN32)
-  set_target_properties(shred PROPERTIES 
-    OUTPUT_NAME "tokenizer"
-    SUFFIX ".pyd"
-  )
+  set_target_properties(tokenizer PROPERTIES SUFFIX ".pyd")
 else()
-  set_target_properties(shred PROPERTIES 
-    OUTPUT_NAME "tokenizer"
-    PREFIX ""
-    SUFFIX ".so"
-  )
+  set_target_properties(tokenizer PROPERTIES PREFIX "")
 endif()
 
 # Install the compiled extension to the shred package directory
-install(TARGETS shred 
+install(TARGETS tokenizer
   DESTINATION shred 
   COMPONENT python_modules
 )

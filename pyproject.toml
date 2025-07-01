@@ -1,5 +1,5 @@
 [build-system]
-requires = ["scikit-build-core>=0.3.3", "pybind11"]
+requires = ["scikit-build-core", "cmake>=3.18", "ninja"]
 build-backend = "scikit_build_core.build"
 
 [project]
@@ -38,12 +38,17 @@ test = [
     "pytest-cov",
 ]
 
-[tool.setuptools]
-packages = ["shred"]
-include-package-data = true
+[tool.scikit-build]
+cmake.source-dir = "."
+cmake.build-type = "Release"
+cmake.args = ["-G", "Ninja"]  # Force Ninja generator
+wheel.expand-macos-universal-tags = true
+wheel.install-dir = "shred"
+install.components = ["python_modules"]
 
-[tool.setuptools.package-data]
-"shred" = ["*.so", "*.dll", "*.dylib", "*.pyd"]
+[tool.scikit-build.cmake.define]
+CMAKE_EXPORT_COMPILE_COMMANDS = "ON"
+BUILD_SHARED_LIBS = "ON"
 
 [tool.black]
 line-length = 88
