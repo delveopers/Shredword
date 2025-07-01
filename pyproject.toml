@@ -1,10 +1,10 @@
 [build-system]
-requires = ["scikit-build-core", "cmake>=3.18", "ninja"]
+requires = ["scikit-build-core"]
 build-backend = "scikit_build_core.build"
 
 [project]
 name = "shredword"
-version = "0.0.6"
+version = "0.0.9"
 description = "fast bpe tokenizer used for experimental models"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -41,7 +41,6 @@ test = [
 [tool.scikit-build]
 cmake.source-dir = "."
 cmake.build-type = "Release"
-cmake.args = ["-G", "Ninja"]  # Force Ninja generator
 wheel.expand-macos-universal-tags = true
 wheel.install-dir = "shred"
 install.components = ["python_modules"]

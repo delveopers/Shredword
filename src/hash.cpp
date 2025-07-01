@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <stdlib.h>
 #include <assert.h>
 #include "hash.h"
 #include "core.h"
