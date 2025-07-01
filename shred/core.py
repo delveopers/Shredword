@@ -3,7 +3,9 @@ from typing import List, Dict, Optional, Union
 from .cbase import lib, create_token_array, create_byte_array, create_encode_unstable_result, check_error
 from ctypes import *
 
-BASIC_REGEX = r"\s*[a-zA-Z0-9]+|\s+|[^\s\w]+"
+# BASIC_REGEX = r"</?[a-z]+>|\s*[a-zA-Z0-9]+|\s+|[^\s\w]+"
+# BASIC_REGEX = r"'(?:[sdmt]|ll|ve|re)|[^\r\n\w]?[a-zA-Z]+|[^\r\n\w]?[0-9]+|\s*[\r\n]+|\s+(?!\S)|\s+"
+BASIC_REGEX = r"'(?:s|t|re|ve|d|ll|m)|[^\r\n\w]?[a-zA-Z]+|[^\r\n\w]?[0-9]+|\s*[\r\n]|\s+|[^\s\w]"
 
 class Shred:
   def __init__(self):
@@ -71,7 +73,6 @@ class Shred:
         clean_token = token_str.strip('"\'')
         if clean_token.startswith('<') and clean_token.endswith('>') and not clean_token.startswith('<0x'):
           special_tokens[clean_token] = rank
-      
       return {'vocab': vocab_list, 'special_tokens': special_tokens, 'pattern': BASIC_REGEX}
     except Exception as e:
       raise ValueError(f"Unable to parse model file for encoding '{encoding_name}': {e}")
@@ -110,36 +111,38 @@ class Shred:
 
   def encode(self, text: str, allowed_special: Optional[List[str]] = None) -> List[int]:
     if not self.bpe: raise RuntimeError("Tokenizer not initialized")
+    if not allowed_special: # If no special tokens are allowed, use ordinary encoding
+      return self.encode_ordinary(text)
+    # Handle special token processing
+    if allowed_special == "all": return self._encode_with_special_preprocessing(text, list(self._special_tokens.keys())) # Using Python-based sp_tok preprocessing when allowed_special="all"
+    elif isinstance(allowed_special, str): return self._encode_with_special_preprocessing(text, [allowed_special])
+    else: return self._encode_with_special_preprocessing(text, allowed_special)
+
+  def _encode_with_special_preprocessing(self, text: str, allowed_special: List[str]) -> List[int]:
+    """Encode text with special token preprocessing"""
+    if not allowed_special:
+      return self.encode_ordinary(text)
     
-    token_array = create_token_array(lib)
-    if not token_array: raise RuntimeError("Failed to create token array")
+    # Create a pattern to match special tokens
+    special_pattern = '|'.join(re.escape(token) for token in allowed_special)
+    if not special_pattern:
+      return self.encode_ordinary(text)
     
-    try:
-      text_bytes = text.encode('utf-8')
-      if allowed_special:
-        if allowed_special == "all":
-          special_list = list(self._special_tokens.keys())
-        elif isinstance(allowed_special, str):
-          special_list = [allowed_special]
-        else:
-          special_list = allowed_special
-        
-        if special_list:
-          special_array = (c_char_p * len(special_list))()
-          for i, s in enumerate(special_list):
-            special_array[i] = s.encode('utf-8')
-          error = lib.encode(self.bpe, text_bytes, special_array, len(special_list), token_array)
-        else:
-          error = lib.encode_ordinary(self.bpe, text_bytes, token_array)
+    # Split text on special tokens while keeping the delimiters
+    parts = re.split(f'({special_pattern})', text)
+    
+    tokens = []
+    for part in parts:
+      if not part:
+        continue
+      elif part in self._special_tokens:
+        # This is a special token
+        tokens.append(self._special_tokens[part])
       else:
-        error = lib.encode_ordinary(self.bpe, text_bytes, token_array)
-      
-      check_error(error)
-      return [token_array.contents.tokens[i] for i in range(token_array.contents.count)]
-    except:
-      return self._fallback_encode(text)
-    finally:
-      if token_array: lib.token_array_free(token_array)
+        # This is regular text, encode it normally
+        tokens.extend(self.encode_ordinary(part))
+    
+    return tokens
 
   def encode_ordinary(self, text: str) -> List[int]:
     if not self.bpe: raise RuntimeError("Tokenizer not initialized")
@@ -160,6 +163,7 @@ class Shred:
   def _fallback_encode(self, text: str) -> List[int]:
     import re
     tokens = []
+    # Use the updated regex pattern for fallback as well
     pieces = re.findall(BASIC_REGEX, text)
     for piece in pieces:
       piece_bytes = piece.encode('utf-8')
