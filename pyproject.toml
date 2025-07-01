@@ -1,10 +1,10 @@
 [build-system]
-requires = ["scikit-build-core>=0.3.3", "pybind11"]
+requires = ["scikit-build-core"]
 build-backend = "scikit_build_core.build"
 
 [project]
 name = "shredword"
-version = "0.0.6"
+version = "0.1.0"
 description = "fast bpe tokenizer used for experimental models"
 readme = "README.md"
 license = {file = "LICENSE"}
@@ -38,12 +38,16 @@ test = [
     "pytest-cov",
 ]
 
-[tool.setuptools]
-packages = ["shred"]
-include-package-data = true
+[tool.scikit-build]
+cmake.source-dir = "."
+cmake.build-type = "Release"
+wheel.expand-macos-universal-tags = true
+wheel.install-dir = "shred"
+install.components = ["python_modules"]
 
-[tool.setuptools.package-data]
-"shred" = ["*.so", "*.dll", "*.dylib", "*.pyd"]
+[tool.scikit-build.cmake.define]
+CMAKE_EXPORT_COMPILE_COMMANDS = "ON"
+BUILD_SHARED_LIBS = "ON"
 
 [tool.black]
 line-length = 88

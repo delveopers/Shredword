@@ -4,9 +4,7 @@ from .cbase import lib, create_token_array, create_byte_array, create_encode_uns
 from ctypes import *
 
 # BASIC_REGEX = r"</?[a-z]+>|\s*[a-zA-Z0-9]+|\s+|[^\s\w]+"
-# BASIC_REGEX = r"'(?:[sdmt]|ll|ve|re)|[^\r\n\w]?[a-zA-Z]+|[^\r\n\w]?[0-9]+|\s*[\r\n]+|\s+(?!\S)|\s+"
-BASIC_REGEX = r"'(?:s|t|re|ve|d|ll|m)|[^\r\n\w]?[a-zA-Z]+|[^\r\n\w]?[0-9]+|\s*[\r\n]|\s+|[^\s\w]"
-
+BASIC_REGEX = r"'(?:s|t|re|ve|d|ll|m)|[^ \r\nA-Za-z0-9]?[A-Za-z]+|[^ \r\nA-Za-z0-9]?[0-9]+|\s*[\r\n]|\s+|[^A-Za-z0-9\s]"
 class Shred:
   def __init__(self):
     self.bpe, self._vocab, self._special_tokens = None, [], {}

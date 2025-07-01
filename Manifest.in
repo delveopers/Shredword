@@ -1,0 +1,11 @@
+include README.md
+include LICENSE
+include CMakeLists.txt
+include pyproject.toml
+recursive-include src *.c *.cpp *.h *.hpp
+recursive-include shred *.py
+global-exclude *.pyc
+global-exclude __pycache__
+global-exclude .git*
+global-exclude build/*
+global-exclude dist/*
