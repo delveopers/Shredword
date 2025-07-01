@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "shredword"
-version = "0.0.9"
+version = "0.1.0"
 description = "fast bpe tokenizer used for experimental models"
 readme = "README.md"
 license = {file = "LICENSE"}
