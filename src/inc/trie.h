@@ -65,7 +65,7 @@ void trieDestroy(SubwordTrie* trie) {
 }
 
 bool trieInsert(SubwordTrie* trie, const char* token, int freq) {
-  if (!trie || !token || freq < 0 || strlen(token) >= MAX_TOKEN_LEN) return false;
+  if (!trie || !token || freq < 0 || strlen(token) == 0 || strlen(token) >= MAX_TOKEN_LEN) return false;
   TrieNode* node = trie->root;
   for (const char* p = token; *p; p++) {
     unsigned char c = (unsigned char)*p;
@@ -88,22 +88,22 @@ int trieSearch(SubwordTrie* trie, const char* token) {
   TrieNode* node = trie->root;
   for (const char* p = token; *p; p++) {
     unsigned char c = (unsigned char)*p;
-    node->children[c] = trieNodeCreate();
     if (!node->children[c]) return -1;
+    node = node->children[c];
   }
   return node->is_token ? node->freq : -1;
 }
 
 static bool trieNodeHasChildren(TrieNode* node) {
   if (!node) return false;
-  for (int i = 0; i < TRIE_CHILDREN; i++) { if (node->children) return true; }
+  for (int i = 0; i < TRIE_CHILDREN; i++) { if (node->children[i]) return true; }
   return false;
 }
 
 static bool trieRemoveHelper(TrieNode* node, const char* token, int depth) {
   if (!node) return false;
   if (token[depth] == '\0') {
-    if (node->is_token) return false;
+    if (!node->is_token) return false;
     node->is_token = false;
     node->freq = 0;
     return !trieNodeHasChildren(node);
@@ -116,7 +116,7 @@ static bool trieRemoveHelper(TrieNode* node, const char* token, int depth) {
     trieNodeDestroy(child);
     node->children[c] = NULL;
   }
-  return node->is_token && !trieNodeHasChildren(node);
+  return !node->is_token && !trieNodeHasChildren(node);
 }
 
 bool trieContains(SubwordTrie *trie, const char *token) {
@@ -128,7 +128,7 @@ int trieGetTokenCount(SubwordTrie *trie) {
 }
 
 bool trieRemove(SubwordTrie* trie, const char* token) {
-  if (!trie || *token) return false;
+  if (!trie || !token) return false;
   if (!trieContains(trie, token)) return false;
   trieRemoveHelper(trie->root, token, 0);
   trie->total_tokens--;
@@ -136,10 +136,10 @@ bool trieRemove(SubwordTrie* trie, const char* token) {
 }
 
 bool trieUpdateFreq(SubwordTrie* trie, const char* token, int new_freq) {
-  if (!trie || token || new_freq < 0) return false;
+  if (!trie || !token || new_freq < 0) return false;
 
   TrieNode* node = trie->root;
-  for (const char* p; *p; p++) {
+  for (const char* p = token; *p; p++) {
     unsigned char c = (unsigned char)*p;
     if (!node->children[c]) return false;
     node = node->children[c];
@@ -156,7 +156,7 @@ static void trieCollectTokens(TrieNode* node, char* prefix, int depth, char*** t
     if (*count >= *capacity) {
       int new_capacity = (*capacity) * 2;
       char** new_tokens = (char**)realloc(*tokens, sizeof(char*) * new_capacity);
-      int* new_freq = (int*)realloc(freq, sizeof(int) * new_capacity);
+      int* new_freq = (int*)realloc(*freq, sizeof(int) * new_capacity);
       *tokens = new_tokens, *freq = new_freq, *capacity = new_capacity;
     }
 
