@@ -21,22 +21,17 @@
 // Sorted token bytes for completion search
 typedef struct {
   uint8_t** tokens;
-  size_t* token_lens;
-  size_t count;
-  size_t capacity;
+  size_t *token_lens, count, capacity;
 } SortedTokens;
 
-// Result structures
 typedef struct {
   Rank* tokens;
-  size_t count;
-  size_t capacity;
+  size_t count, capacity;
 } TokenArray;
 
 typedef struct {
   TokenArray** completions;
-  size_t count;
-  size_t capacity;
+  size_t count, capacity;
 } CompletionSet;
 
 typedef struct {
@@ -50,28 +45,26 @@ typedef struct {
 } ByteArray;
 
 extern "C" {
-  // Memory management helpers
-  TokenArray* token_array_new(size_t capacity);
-  void token_array_free(TokenArray* array);
-  void token_array_clear(TokenArray* array);
+  TokenArray* tokenArrayCreate(size_t capacity);
+  void tokenArrayFree(TokenArray* array);
+  void tokenArrayClear(TokenArray* array);
 
-  // completion set functions
-  CompletionSet* completion_set_new(size_t capacity);
-  void completion_set_free(CompletionSet* set);
+  CompletionSet* completionSetCreate(size_t capacity);
+  void completionSetFree(CompletionSet* set);
+  void completionSetAdd(CompletionSet* set, TokenArray* completion);
 
-  EncodeUnstableResult* encode_unstable_result_new(void);
-  void encode_unstable_result_free(EncodeUnstableResult* result);
+  EncodeUnstableResult* encodeUnstableResultCreate();
+  void encodeUnstableResultFree(EncodeUnstableResult* result);
 
-  ByteArray* byte_array_new(size_t capacity);
-  void byte_array_free(ByteArray* array);
-  void byte_array_clear(ByteArray* array);
+  ByteArray* byteArrayCreate(size_t capacity);
+  void byteArrayFree(ByteArray* array);
+  void byteArrayClear(ByteArray* array);
 
-  SortedTokens* sorted_tokens_new(void);
-  void sorted_tokens_free(SortedTokens* tokens);
-  ShredError sorted_tokens_add(SortedTokens* tokens, const uint8_t* token, size_t token_len);
-  ShredError sorted_tokens_sort(SortedTokens* tokens);
-  size_t sorted_tokens_find_prefix(SortedTokens* tokens, const uint8_t* prefix, size_t prefix_len);
-  ShredError completion_set_add(CompletionSet* set, TokenArray* completion);
+  SortedTokens* sortedTokensCreate();
+  void sortedTokensFree(SortedTokens* tokens);
+  void sortedTokensAdd(SortedTokens* tokens, const uint8_t* token, size_t token_len);
+  void sortedTokensSort(SortedTokens* tokens);
+  size_t sortedTokensFindPrefix(SortedTokens* tokens, const uint8_t* prefix, size_t prefix_len);
 }
 
 #endif  //!__TOKEN__H__
