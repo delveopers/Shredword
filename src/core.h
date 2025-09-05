@@ -25,7 +25,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
-#include "hash.h"
+#include "hashmap.h"
 #include "token.h"
 
 // Main CoreBPE structure
@@ -41,24 +41,24 @@ typedef struct {
 
 extern "C" {
   // Core API functions
-  CoreBPE* shred_new(const uint8_t** encoder_keys, const size_t* encoder_key_lens, const Rank* encoder_values, size_t encoder_count, const char** special_token_keys, const Rank* special_token_values, size_t special_token_count, const char* pattern);
-  void shred_free(CoreBPE* bpe);
+  CoreBPE* shredCreate(uint8_t** encoder_keys, const size_t* encoder_key_lens, const Rank* encoder_values, size_t encoder_count, const char** special_token_keys, const Rank* special_token_values, size_t special_token_count, const char* pattern);
+  void shredFree(CoreBPE* bpe);
 
   // Encoding functions
-  ShredError encode_ordinary(CoreBPE* bpe, const char* text, TokenArray* result);
-  ShredError encode(CoreBPE* bpe, const char* text, const char** allowed_special, size_t allowed_special_count, TokenArray* result);
-  ShredError encode_with_unstable(CoreBPE* bpe, const char* text, const char** allowed_special, size_t allowed_special_count, EncodeUnstableResult* result);
-  ShredError encode_bytes(CoreBPE* bpe, const uint8_t* bytes, size_t byte_len, TokenArray* result);
-  ShredError encode_single_token(CoreBPE* bpe, const uint8_t* piece, size_t piece_len, Rank* result);
-  ShredError encode_single_piece(CoreBPE* bpe, const uint8_t* piece, size_t piece_len, TokenArray* result);
+  void encodeOrdinary(CoreBPE* bpe, const char* text, TokenArray* result);
+  void encode(CoreBPE* bpe, const char* text, const char** allowed_special, size_t allowed_special_count, TokenArray* result);
+  void encodeWithUnstable(CoreBPE* bpe, const char* text, const char** allowed_special, size_t allowed_special_count, EncodeUnstableResult* result);
+  void encodeBytes(CoreBPE* bpe, const uint8_t* bytes, size_t byte_len, TokenArray* result);
+  void encodeSingleToken(CoreBPE* bpe, const uint8_t* piece, size_t piece_len, Rank* result);
+  void encodeSinglePiece(CoreBPE* bpe, const uint8_t* piece, size_t piece_len, TokenArray* result);
 
   // Decoding functions
-  ShredError decode_bytes(CoreBPE* bpe, const Rank* tokens, size_t token_count, ByteArray* result);
-  ShredError decode_single_token_bytes(CoreBPE* bpe, Rank token, ByteArray* result);
+  void decodeBytes(CoreBPE* bpe, const Rank* tokens, size_t token_count, ByteArray* result);
+  void decodeSingleTokenBytes(CoreBPE* bpe, Rank token, ByteArray* result);
 
   // Utility functions
-  size_t get_token_count(CoreBPE* bpe);
-  ShredError get_token_byte_values(CoreBPE* bpe, ByteArray** results, size_t* count);
-  ShredError token_array_push(TokenArray* array, Rank token);
+  size_t getTokenCount(CoreBPE* bpe);
+  void getTokenByteValues(CoreBPE* bpe, ByteArray** results, size_t* count);
+  void tokenArrayPush(TokenArray* array, Rank token);
 }
 #endif //!__SHRED_H__
