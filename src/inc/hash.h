@@ -15,11 +15,11 @@ static inline uint32_t djb2_hash(const char *str) {
   return hash;
 }
 
-static inline uint32_t fnv1a_hash(const char *str) {
+static uint32_t fnv1a_hash(const uint8_t* data, size_t len) {
   uint32_t hash = 2166136261u;
-  while (*str) {
-    hash ^= (uint8_t)*str++;
-    hash *= 16777619;
+  for (size_t i = 0; i < len; i++) {
+    hash ^= data[i];
+    hash *= 16777619u;
   }
   return hash;
 }
