@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include "token.h"
-#include "hash.h"
+#include "hashmap.h"
 #include "core.h"
 
 TokenArray* tokenArrayCreate(size_t capacity) {

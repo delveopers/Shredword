@@ -57,13 +57,13 @@ typedef struct RvereseMap {
 extern "C" {
   HashMap* hashmapCreate(size_t bucket_count);
   void hashmapFree(HashMap* map);
-  bool hashmapGet(HashMap* map, uint8_t* key, size_t key_len, Rank* value);
-  void hashmapInsert(HashMap* map, uint8_t* key, size_t key_len, Rank value);  
+  bool hashmapGet(HashMap* map, const uint8_t* key, size_t key_len, Rank* value);
+  void hashmapInsert(HashMap* map, const uint8_t* key, size_t key_len, Rank value);  
 
   HashMapStr* strmapCreate(size_t bucket_count);
   void strmapFree(HashMapStr* strmap);
-  bool strmapGet(HashMapStr* strmap, char* key, Rank* value);
-  void strmapInsert(HashMapStr* strmap, char* key, Rank value);
+  bool strmapGet(HashMapStr* strmap, const char* key, Rank* value);
+  void strmapInsert(HashMapStr* strmap, const char* key, Rank value);
 
   ReverseMap* revmapCreate(size_t bucket_count);
   void revmapFree(ReverseMap* revmap);

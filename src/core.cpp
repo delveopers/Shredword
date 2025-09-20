@@ -88,6 +88,10 @@ void shredFree(CoreBPE* bpe) {
   free(bpe);
 }
 
+void encode(CoreBPE* bpe, const char* text, const char** allowed_special, size_t allowed_special_count, TokenArray* result) {
+  
+}
+
 // Encode ordinary text (no special tokens)
 void encodeOrdinary(CoreBPE* bpe, const char* text, TokenArray* result) {
   if (!bpe || !text || !result) {

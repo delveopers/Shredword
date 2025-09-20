@@ -16,7 +16,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
-#include "hash.h"
+#include "hashmap.h"
 
 // Sorted token bytes for completion search
 typedef struct {
