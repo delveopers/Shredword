@@ -301,10 +301,21 @@ size_t getTokenCount(CoreBPE* bpe) {
 
 // Internal helper functions -----------------
 static void compileRegex(const char* pattern, regex_t* regex) {
-  int result = regcomp(regex, pattern, REG_EXTENDED);
-  if (result == 0) {
-    fprintf(stderr, "Couldn't compile the given Regex Pattern\n");
-    exit(EXIT_FAILURE);
+  int flags = REG_EXTENDED | REG_NEWLINE;
+  int result = regcomp(regex, pattern, flags);
+
+  if (result != 0) {
+    // Fallback to a simpler pattern if compilation fails
+    const char* fallback_pattern = "[a-zA-Z]+|[0-9]+|[^a-zA-Z0-9\\s]+|\\s+";
+    fprintf(stderr, "SHRED>WARNING 104 <compileRegex() in core.cpp>: Original regex failed, using fallback pattern\n");
+    
+    result = regcomp(regex, fallback_pattern, flags);
+    if (result != 0) {
+      char error_buffer[256];
+      regerror(result, regex, error_buffer, sizeof(error_buffer));
+      fprintf(stderr, "SHRED>ERROR 103 <compileRegex() in core.cpp> : Regex compilation failed: %s\n", error_buffer);
+      exit(EXIT_FAILURE);
+    }
   }
 }
 
@@ -354,21 +365,24 @@ static void bytePairEncodeInternal(const uint8_t* piece, size_t piece_len, HashM
   if (piece_len == 0) return;
   if (piece_len == 1) {
     Rank token;
-    if (hashmapGet(encoder, (uint8_t*)piece, 1, &token)) { return tokenArrayPush(result, token); }
-    fprintf(stderr, "SHRED>ERROR 202 <bytePairEncodeInternal() in core.cpp>  Encountered invalid Token\n");
+    if (hashmapGet(encoder, (uint8_t*)piece, 1, &token)) { tokenArrayPush(result, token); return; }
+    tokenArrayPush(result, 0);  // Byte-level fallback - use token 0 for unknown bytes
+    return;
   }
-
   size_t* parts = NULL;
   size_t parts_count = 0;
   bytePairMerge(encoder, piece, piece_len, &parts, &parts_count);
   for (size_t i = 0; i < parts_count - 1; i++) {
-    size_t start = parts[i]; size_t end = parts[i + 1]; size_t token_len = end - start;
+    size_t start = parts[i], end = parts[i + 1], token_len = end - start;
     Rank token;
-    if (!hashmapGet(encoder, (uint8_t*)piece + start, token_len, &token)) {
-      free(parts);
-      fprintf(stderr, "SHRED>ERROR 202 <bytePairEncodeInternal() in core.cpp>  Encountered invalid Token\n");
-    } 
-    tokenArrayPush(result, token);
+
+    if (hashmapGet(encoder, (uint8_t*)piece + start, token_len, &token)) { tokenArrayPush(result, token); }
+    else {
+      for (size_t j = start; j < end; j++) {  // Try byte-level encoding for this segment
+        if (hashmapGet(encoder, (uint8_t*)piece + j, 1, &token)) { tokenArrayPush(result, token); }
+        else { tokenArrayPush(result, 0); }
+      }
+    }
   }
   free(parts);
 }
