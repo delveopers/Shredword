@@ -3,15 +3,22 @@ from typing import List, Dict, Optional, Union
 from .cbase import lib, create_token_array, create_byte_array, create_encode_unstable_result
 from ctypes import *
 
-BASIC_REGEX = r"'(?:s|t|re|ve|d|ll|m)|[^ \r\nA-Za-z0-9]?[A-Za-z]+|[^ \r\nA-Za-z0-9]?[0-9]+|\s*[\r\n]|\s+|[^A-Za-z0-9\s]"
+# BASIC_REGEX = r"'(?:s|t|re|ve|d|ll|m)|[^ \r\nA-Za-z0-9]?[A-Za-z]+|[^ \r\nA-Za-z0-9]?[0-9]+|\s*[\r\n]|\s+|[^A-Za-z0-9\s]"
+BASIC_REGEX = r"'s|'t|'re|'ve|'d|'ll|'m|[A-Za-z]+|\d+|\r?\n|\s+|[^\w\s]"
 
 class Shred:
   def __init__(self):
     self.bpe, self._vocab, self._special_tokens = None, [], {}
     self._encoder, self._decoder, self._encoder_buffers = {}, {}, []
 
-  def load_from_encoding(self, encoding_name: str):
-    vocab_data = self._download_vocab(encoding_name)
+  def load_from_encoding(self, encoding_name: str, download: bool = True):
+    if download:
+      vocab_data = self._download_vocab(encoding_name)
+    else:
+      with open(encoding_name, "r", encoding="utf-8") as f:
+        content = f.read()
+      vocab_data = self._parse_model_file(content.encode("utf-8"), encoding_name)
+
     self._vocab, self._special_tokens = vocab_data['vocab'], vocab_data.get('special_tokens', {})
     self._build_mappings()
     self._initialize_bpe(vocab_data.get('pattern', BASIC_REGEX))
@@ -238,7 +245,7 @@ class Shred:
   def __del__(self):
     if self.bpe: lib.shredFree(self.bpe)
 
-def load_encoding(encoding_name: str) -> Shred:
+def load_encoding(encoding_name: str, download: bool = True) -> Shred:
   tokenizer = Shred()
-  tokenizer.load_from_encoding(encoding_name)
+  tokenizer.load_from_encoding(encoding_name, download)
   return tokenizer
