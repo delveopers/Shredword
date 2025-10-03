@@ -25,6 +25,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <regex>
 #include "hashmap.h"
 #include "token.h"
 
@@ -34,8 +35,10 @@ typedef struct {
   HashMapStr* special_tokens_encoder;
   ReverseMap* decoder;
   ReverseMap* special_tokens_decoder;
-  void* regex;    // regex pointers
-  void* special_regex;    // regex pointers
+  // void* regex;    // regex pointers
+  // void* special_regex;    // regex pointers
+  std::regex* regex;
+  std::regex* special_regex;
   SortedTokens* sorted_token_bytes;
 } CoreBPE;
 
