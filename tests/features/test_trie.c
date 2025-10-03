@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
-#include "trie.h"
+#include "../../src/inc/trie.h"
 
 void test_basic_operations() {
   printf("Testing basic operations...\n");

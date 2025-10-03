@@ -2,7 +2,8 @@
 #include <string.h>
 #include <stdio.h>
 #include <assert.h>
-#include <regex.h>
+// #include <regex.h>
+#include <regex>
 #include "hashmap.h"
 #include "token.h"
 #include "core.h"
@@ -11,8 +12,10 @@
 
 static void bytePairMerge(HashMap* ranks, const uint8_t* piece, size_t piece_len, size_t** parts, size_t* parts_count);
 static void bytePairEncodeInternal(const uint8_t* piece, size_t piece_len, HashMap* encoder, TokenArray* result);
-static void compileRegex(const char* pattern, regex_t* regex);
-static void findRegexMatches(regex_t* regex, const char* text, size_t** matches, size_t* match_count);
+// static void compileRegex(const char* pattern, regex_t* regex);
+// static void findRegexMatches(regex_t* regex, const char* text, size_t** matches, size_t* match_count);
+static void compileRegex(const char* pattern, std::regex** regex);
+static void findRegexMatches(std::regex* regex, const char* text, size_t** matches, size_t* match_count);
 
 CoreBPE* shredCreate(uint8_t** encoder_keys, const size_t* encoder_key_lens, const Rank* encoder_values, size_t encoder_count, const char** special_token_keys, const Rank* special_token_values, size_t special_token_count, const char* pattern) {
   if (!encoder_keys || !encoder_key_lens || !encoder_values || !pattern) {
@@ -57,13 +60,15 @@ CoreBPE* shredCreate(uint8_t** encoder_keys, const size_t* encoder_key_lens, con
       revmapInsert(bpe->special_tokens_decoder, special_token_values[i], (const uint8_t*)special_token_keys[i], key_len);
     }
   }
-  bpe->regex = malloc(sizeof(regex_t));
-  if (!bpe->regex) {
-    fprintf(stderr, "SHRED>ERROR 102 <shredCreate() in core.cpp>:  Couldn't allocate memory\n");
-    shredFree(bpe);
-    exit(EXIT_FAILURE);
-  }
-  compileRegex(pattern, (regex_t*)bpe->regex);
+  // bpe->regex = malloc(sizeof(regex_t));
+  // if (!bpe->regex) {
+  //   fprintf(stderr, "SHRED>ERROR 102 <shredCreate() in core.cpp>:  Couldn't allocate memory\n");
+  //   shredFree(bpe);
+  //   exit(EXIT_FAILURE);
+  // }
+  // compileRegex(pattern, (regex_t*)bpe->regex);
+  bpe->regex = NULL;
+  compileRegex(pattern, &bpe->regex);
   return bpe;
 }
 
@@ -77,12 +82,10 @@ void shredFree(CoreBPE* bpe) {
   if (bpe->decoder) { revmapFree(bpe->decoder); }
   if (bpe->special_tokens_decoder) { revmapFree(bpe->special_tokens_decoder); }
   if (bpe->regex) {
-    regfree((regex_t*)bpe->regex);
-    free(bpe->regex);
+    delete bpe->regex;
   }
   if (bpe->special_regex) {
-    regfree((regex_t*)bpe->special_regex);
-    free(bpe->special_regex);
+    delete bpe->special_regex;
   }
   if (bpe->sorted_token_bytes) sortedTokensFree(bpe->sorted_token_bytes);
   free(bpe);
@@ -102,7 +105,7 @@ void encodeOrdinary(CoreBPE* bpe, const char* text, TokenArray* result) {
   tokenArrayClear(result);
   size_t* matches = NULL;
   size_t match_count = 0;
-  findRegexMatches((regex_t*)bpe->regex, text, &matches, &match_count);
+  findRegexMatches(bpe->regex, text, &matches, &match_count);
   for (size_t i = 0; i < match_count; i += 2) {
     size_t start = matches[i];
     size_t end = matches[i + 1];
@@ -300,61 +303,97 @@ size_t getTokenCount(CoreBPE* bpe) {
 }
 
 // Internal helper functions -----------------
-static void compileRegex(const char* pattern, regex_t* regex) {
-  int flags = REG_EXTENDED | REG_NEWLINE;
-  int result = regcomp(regex, pattern, flags);
+// static void compileRegex(const char* pattern, regex_t* regex) {
+//   int flags = REG_EXTENDED | REG_NEWLINE;
+//   int result = regcomp(regex, pattern, flags);
 
-  if (result != 0) {
-    // Fallback to a simpler pattern if compilation fails
-    const char* fallback_pattern = "[a-zA-Z]+|[0-9]+|[^a-zA-Z0-9\\s]+|\\s+";
-    fprintf(stderr, "SHRED>WARNING 104 <compileRegex() in core.cpp>: Original regex failed, using fallback pattern\n");
-    
-    result = regcomp(regex, fallback_pattern, flags);
-    if (result != 0) {
-      char error_buffer[256];
-      regerror(result, regex, error_buffer, sizeof(error_buffer));
-      fprintf(stderr, "SHRED>ERROR 103 <compileRegex() in core.cpp> : Regex compilation failed: %s\n", error_buffer);
-      exit(EXIT_FAILURE);
-    }
+//   if (result != 0) {
+//     // Linux POSIX regex doesn't support "(?: ... )"
+//     const char* fallback_pattern = "[A-Za-z]+|[0-9]+|[^A-Za-z0-9\\s]+|\\s+";
+//     fprintf(stderr, "SHRED>WARNING 104 <compileRegex()>: Falling back to POSIX-compatible regex\n");
+
+//     result = regcomp(regex, fallback_pattern, flags);
+//     if (result != 0) {
+//       char error_buffer[256];
+//       regerror(result, regex, error_buffer, sizeof(error_buffer));
+//       fprintf(stderr, "SHRED>ERROR 103 <compileRegex()> : Regex compilation failed: %s\n", error_buffer);
+//       exit(EXIT_FAILURE);
+//     }
+//   }
+// }
+
+// static void findRegexMatches(regex_t* regex, const char* text, size_t** matches, size_t* match_count) {
+//   if (!regex || !text || !matches || !match_count) {
+//     fprintf(stderr, "SHRED>ERROR 101 <findRegexMatches() in core.cpp>:  Invalid or NULL Parameters\n");
+//     exit(EXIT_FAILURE);
+//   }
+
+//   size_t capacity = 16;
+//   *matches = (size_t*)malloc(capacity * sizeof(size_t));
+//   if (!*matches) {
+//     fprintf(stderr, "SHRED>ERROR 102 <findRegexMatches() in core.cpp>:  Couldn't allocate memory\n");
+//     exit(EXIT_FAILURE);
+//   }
+
+//   *match_count = 0;
+//   regmatch_t match;
+//   const char* current = text;
+//   size_t offset = 0;
+
+//   while (regexec(regex, current, 1, &match, 0) == 0) {
+//     if (*match_count + 2 >= capacity) {
+//       capacity *= 2;
+//       size_t* new_matches = (size_t*)realloc(*matches, capacity * sizeof(size_t));
+//       if (!new_matches) {
+//         fprintf(stderr, "SHRED>ERROR 102 <findRegexMatches() in core.cpp>:  Couldn't allocate memory\n");
+//         free(*matches);
+//         exit(EXIT_FAILURE);
+//       }
+//       *matches = new_matches;
+//     }
+//     (*matches)[(*match_count)++] = offset + match.rm_so;
+//     (*matches)[(*match_count)++] = offset + match.rm_eo;
+//     if (match.rm_eo == 0) break; // Avoid infinite loop on zero-length matches 
+//     current += match.rm_eo;
+//     offset += match.rm_eo;
+//   }
+// }
+
+static void compileRegex(const char* pattern, std::regex** regex) {
+  try {
+    *regex = new std::regex(pattern, std::regex::ECMAScript);
+  } catch (const std::regex_error& e) {
+    const char* fallback_pattern = "[A-Za-z]+|[0-9]+|[^A-Za-z0-9\\s]+|\\s+";
+    fprintf(stderr, "SHRED>WARNING <compileRegex()>: Regex failed (%s), using fallback\n", e.what());
+    *regex = new std::regex(fallback_pattern, std::regex::ECMAScript);
   }
 }
 
-static void findRegexMatches(regex_t* regex, const char* text, size_t** matches, size_t* match_count) {
+static void findRegexMatches(std::regex* regex, const char* text, size_t** matches, size_t* match_count) {
   if (!regex || !text || !matches || !match_count) {
-    fprintf(stderr, "SHRED>ERROR 101 <findRegexMatches() in core.cpp>:  Invalid or NULL Parameters\n");
+    fprintf(stderr, "SHRED>ERROR <findRegexMatches()>: Invalid or NULL Parameters\n");
     exit(EXIT_FAILURE);
   }
 
-  size_t capacity = 16;
-  *matches = (size_t*)malloc(capacity * sizeof(size_t));
-  if (!*matches) {
-    fprintf(stderr, "SHRED>ERROR 102 <findRegexMatches() in core.cpp>:  Couldn't allocate memory\n");
-    exit(EXIT_FAILURE);
+  std::string s(text);
+  std::vector<size_t> tmp;
+  std::sregex_iterator it(s.begin(), s.end(), *regex), end;
+  for (; it != end; ++it) {
+    tmp.push_back(it->position());
+    tmp.push_back(it->position() + it->length());
   }
 
-  *match_count = 0;
-  regmatch_t match;
-  const char* current = text;
-  size_t offset = 0;
-
-  while (regexec(regex, current, 1, &match, 0) == 0) {
-    if (*match_count + 2 >= capacity) {
-      capacity *= 2;
-      size_t* new_matches = (size_t*)realloc(*matches, capacity * sizeof(size_t));
-      if (!new_matches) {
-        fprintf(stderr, "SHRED>ERROR 102 <findRegexMatches() in core.cpp>:  Couldn't allocate memory\n");
-        free(*matches);
-        exit(EXIT_FAILURE);
-      }
-      *matches = new_matches;
+  *match_count = tmp.size();
+  if (*match_count > 0) {
+    *matches = (size_t*)malloc(tmp.size() * sizeof(size_t));
+    if (!*matches) {
+      fprintf(stderr, "SHRED>ERROR <findRegexMatches()>: Couldn't allocate memory\n");
+      exit(EXIT_FAILURE);
     }
-    (*matches)[(*match_count)++] = offset + match.rm_so;
-    (*matches)[(*match_count)++] = offset + match.rm_eo;
-    if (match.rm_eo == 0) break; // Avoid infinite loop on zero-length matches 
-    current += match.rm_eo;
-    offset += match.rm_eo;
+    memcpy(*matches, tmp.data(), tmp.size() * sizeof(size_t));
+  } else {
+    *matches = nullptr;
   }
-
 }
 
 static void bytePairEncodeInternal(const uint8_t* piece, size_t piece_len, HashMap* encoder, TokenArray* result) {
