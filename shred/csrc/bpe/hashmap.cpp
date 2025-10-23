@@ -6,15 +6,23 @@
 #include <assert.h>
 #include "hashmap.h"
 #include "core.h"
-#include "inc/hash.h"
+#include "../inc/hash.h"
 
-static uint32_t fnv1a_hash_str(const char* str) { return fnv1a_hash((const uint8_t*)str, strlen(str)); }
+static inline uint32_t fnv1a_hash_str(const char* str) {
+  uint32_t hash = 2166136261u;
+  while (*str) {
+    hash ^= (uint8_t)*str++;
+    hash *= 16777619u;
+  }
+  return hash;
+}
 
 HashMap* hashmapCreate(size_t bucket_count) {
   if (bucket_count == 0) bucket_count = DEFAULT_HASH_BUCKET_SIZE;
   HashMap* map = (HashMap*)malloc(sizeof(HashMap));
   if (!map) return NULL;
   map->buckets = (HashMapNode**)calloc(bucket_count, sizeof(HashMapNode*));
+  if (!map->buckets) { free(map); return NULL; }
   map->bucket_count = bucket_count;
   map->size = 0;
   return map;
@@ -33,7 +41,7 @@ void hashmapFree(HashMap* map) {
       free(node);
       node = next;
     }
-  }  
+  }
   free(map->buckets);
   free(map);
 }
@@ -43,11 +51,9 @@ bool hashmapGet(HashMap* map, const uint8_t* key, size_t key_len, Rank* value) {
     fprintf(stderr, "SHRED>ERROR 101 <hashmapGet() in hashmap.cpp>:  Invalid or NULL Parameters\n");
     exit(EXIT_FAILURE);
   }
-
   uint32_t hash = fnv1a_hash(key, key_len);
   size_t bucket = hash % map->bucket_count;
   HashMapNode* node = map->buckets[bucket];
-
   while (node) {
     if (node->key_len == key_len && memcmp(node->key, key, key_len) == 0) {
       *value = node->value;
@@ -59,9 +65,11 @@ bool hashmapGet(HashMap* map, const uint8_t* key, size_t key_len, Rank* value) {
 }
 
 HashMapStr* strmapCreate(size_t bucket_count) {
-  if (bucket_count == 0) bucket_count == DEFAULT_STR_BUCKET_SIZE;
+  if (bucket_count == 0) bucket_count = DEFAULT_STR_BUCKET_SIZE;
   HashMapStr* strmap = (HashMapStr*)malloc(sizeof(HashMapStr));
+  if (!strmap) return NULL;
   strmap->buckets = (HashMapStrNode**)calloc(bucket_count, sizeof(HashMapStrNode*));
+  if (!strmap->buckets) { free(strmap); return NULL; }
   strmap->bucket_count = bucket_count;
   strmap->size = 0;
   return strmap;
@@ -90,9 +98,8 @@ bool strmapGet(HashMapStr* map, const char* key, Rank* value) {
     fprintf(stderr, "SHRED>ERROR 101 <strmapGet() in hashmap.cpp>:  Invalid or NULL Parameters\n");
     exit(EXIT_FAILURE);
   }
-
   uint32_t hash = fnv1a_hash_str(key);
-  size_t bucket = hash % map->bucket_count; 
+  size_t bucket = hash % map->bucket_count;
   HashMapStrNode* node = map->buckets[bucket];
   while (node) {
     if (strcmp(node->key, key) == 0) {
@@ -109,6 +116,7 @@ ReverseMap* revmapCreate(size_t bucket_count) {
   ReverseMap* map = (ReverseMap*)malloc(sizeof(ReverseMap));
   if (!map) return NULL;
   map->buckets = (ReverseMapNode**)calloc(bucket_count, sizeof(ReverseMapNode*));
+  if (!map->buckets) { free(map); return NULL; }
   map->bucket_count = bucket_count;
   map->size = 0;
   return map;
@@ -127,15 +135,14 @@ void revmapFree(ReverseMap* map) {
       free(node);
       node = next;
     }
-  }  
+  }
   free(map->buckets);
   free(map);
 }
 
 bool revmapGet(ReverseMap* map, Rank key, uint8_t** value, size_t* value_len) {
   if (!map || !value || !value_len) return false;
-
-  size_t bucket = key % map->bucket_count;  
+  size_t bucket = key % map->bucket_count;
   ReverseMapNode* node = map->buckets[bucket];
   while (node) {
     if (node->key == key) {
@@ -155,16 +162,14 @@ void hashmapInsert(HashMap* map, const uint8_t* key, size_t key_len, Rank value)
   }
   uint32_t hash = fnv1a_hash(key, key_len);
   size_t bucket = hash % map->bucket_count;
-
   HashMapNode* node = map->buckets[bucket];
   while (node) {
-    if (node->key == key && memcmp(node->key, key, key_len) == 0) {
+    if (node->key_len == key_len && memcmp(node->key, key, key_len) == 0) {
       node->value = value;
       return;
     }
     node = node->next;
   }
-
   node = (HashMapNode*)malloc(sizeof(HashMapNode));
   if (!node) {
     fprintf(stderr, "SHRED>ERROR 102 <hashmapInsert() in hashmap.cpp>:  Couldn't allocate memory\n");
@@ -172,6 +177,7 @@ void hashmapInsert(HashMap* map, const uint8_t* key, size_t key_len, Rank value)
   }
   node->key = (uint8_t*)malloc(key_len);
   if (!node->key) {
+    free(node);
     fprintf(stderr, "SHRED>ERROR 102 <hashmapInsert() in hashmap.cpp>:  Couldn't allocate memory\n");
     exit(EXIT_FAILURE);
   }
@@ -184,14 +190,12 @@ void hashmapInsert(HashMap* map, const uint8_t* key, size_t key_len, Rank value)
 }
 
 void strmapInsert(HashMapStr* strmap, const char* key, Rank value) {
-  if (!strmap || !key ) {
+  if (!strmap || !key) {
     fprintf(stderr, "SHRED>ERROR 101 <strmapInsert() in hashmap.cpp>:  Invalid or NULL Parameters\n");
-    exit(EXIT_FAILURE); 
+    exit(EXIT_FAILURE);
   }
-
   uint32_t hash = fnv1a_hash_str(key);
   size_t bucket = hash % strmap->bucket_count;
-
   HashMapStrNode* node = strmap->buckets[bucket];
   while (node) {
     if (strcmp(node->key, key) == 0) {
@@ -200,7 +204,6 @@ void strmapInsert(HashMapStr* strmap, const char* key, Rank value) {
     }
     node = node->next;
   }
-
   node = (HashMapStrNode*)malloc(sizeof(HashMapStrNode));
   if (!node) {
     fprintf(stderr, "SHRED>ERROR 102 <strmapInsert() in hashmap.cpp>:  Couldn't allocate memory\n");
@@ -208,6 +211,7 @@ void strmapInsert(HashMapStr* strmap, const char* key, Rank value) {
   }
   node->key = strdup(key);
   if (!node->key) {
+    free(node);
     fprintf(stderr, "SHRED>ERROR 102 <strmapInsert() in hashmap.cpp>:  Couldn't allocate memory\n");
     exit(EXIT_FAILURE);
   }
@@ -238,7 +242,6 @@ void revmapInsert(ReverseMap* revmap, Rank key, const uint8_t* value, size_t val
     }
     node = node->next;
   }
-
   node = (ReverseMapNode*)malloc(sizeof(ReverseMapNode));
   if (!node) {
     fprintf(stderr, "SHRED>ERROR 102 <revmapInsert() in hashmap.cpp>:  Couldn't allocate memory\n");
@@ -246,10 +249,10 @@ void revmapInsert(ReverseMap* revmap, Rank key, const uint8_t* value, size_t val
   }
   node->value = (uint8_t*)malloc(value_len);
   if (!node->value) {
+    free(node);
     fprintf(stderr, "SHRED>ERROR 102 <revmapInsert() in hashmap.cpp>:  Couldn't allocate memory\n");
     exit(EXIT_FAILURE);
   }
-
   memcpy(node->value, value, value_len);
   node->key = key;
   node->value_len = value_len;

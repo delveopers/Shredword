@@ -2,18 +2,16 @@
 #include <string.h>
 #include <stdio.h>
 #include <assert.h>
-// #include <regex.h>
 #include <regex>
 #include "hashmap.h"
 #include "token.h"
 #include "core.h"
 
 #define C_UINT32_MAX 0xFFFFFFFF
+#define DECODE_BUFFER_INIT 4096
 
 static void bytePairMerge(HashMap* ranks, const uint8_t* piece, size_t piece_len, size_t** parts, size_t* parts_count);
 static void bytePairEncodeInternal(const uint8_t* piece, size_t piece_len, HashMap* encoder, TokenArray* result);
-// static void compileRegex(const char* pattern, regex_t* regex);
-// static void findRegexMatches(regex_t* regex, const char* text, size_t** matches, size_t* match_count);
 static void compileRegex(const char* pattern, std::regex** regex);
 static void findRegexMatches(std::regex* regex, const char* text, size_t** matches, size_t* match_count);
 
@@ -60,13 +58,6 @@ CoreBPE* shredCreate(uint8_t** encoder_keys, const size_t* encoder_key_lens, con
       revmapInsert(bpe->special_tokens_decoder, special_token_values[i], (const uint8_t*)special_token_keys[i], key_len);
     }
   }
-  // bpe->regex = malloc(sizeof(regex_t));
-  // if (!bpe->regex) {
-  //   fprintf(stderr, "SHRED>ERROR 102 <shredCreate() in core.cpp>:  Couldn't allocate memory\n");
-  //   shredFree(bpe);
-  //   exit(EXIT_FAILURE);
-  // }
-  // compileRegex(pattern, (regex_t*)bpe->regex);
   bpe->regex = NULL;
   compileRegex(pattern, &bpe->regex);
   return bpe;
@@ -81,27 +72,18 @@ void shredFree(CoreBPE* bpe) {
   if (bpe->special_tokens_encoder) { strmapFree(bpe->special_tokens_encoder); }
   if (bpe->decoder) { revmapFree(bpe->decoder); }
   if (bpe->special_tokens_decoder) { revmapFree(bpe->special_tokens_decoder); }
-  if (bpe->regex) {
-    delete bpe->regex;
-  }
-  if (bpe->special_regex) {
-    delete bpe->special_regex;
-  }
+  if (bpe->regex) { delete bpe->regex; }
+  if (bpe->special_regex) { delete bpe->special_regex; }
   if (bpe->sorted_token_bytes) sortedTokensFree(bpe->sorted_token_bytes);
   free(bpe);
 }
 
-void encode(CoreBPE* bpe, const char* text, const char** allowed_special, size_t allowed_special_count, TokenArray* result) {
-  
-}
 
-// Encode ordinary text (no special tokens)
 void encodeOrdinary(CoreBPE* bpe, const char* text, TokenArray* result) {
   if (!bpe || !text || !result) {
     fprintf(stderr, "SHRED>ERROR 101 <encodeOrdinary() in core.cpp>:  Invalid or NULL Parameters\n");
     exit(EXIT_FAILURE);
   }
-
   tokenArrayClear(result);
   size_t* matches = NULL;
   size_t match_count = 0;
@@ -111,8 +93,6 @@ void encodeOrdinary(CoreBPE* bpe, const char* text, TokenArray* result) {
     size_t end = matches[i + 1];
     size_t piece_len = end - start;
     uint8_t* piece = (uint8_t*)(text + start);
-
-    // trying direct lookup first else moving to BPE encoding
     Rank token;
     if (hashmapGet(bpe->encoder, piece, piece_len, &token)) { tokenArrayPush(result, token); }
     else { bytePairEncodeInternal(piece, piece_len, bpe->encoder, result); }
@@ -120,38 +100,35 @@ void encodeOrdinary(CoreBPE* bpe, const char* text, TokenArray* result) {
   free(matches);
 }
 
-// Encode with special tokens support
-void encode(CoreBPE* bpe, const char* text, char** allowed_special, size_t allowed_special_count, TokenArray* result) {
+void encode(CoreBPE* bpe, const char* text, const char** allowed_special, size_t allowed_special_count, TokenArray* result) {
   if (!bpe || !text || !result) {
     fprintf(stderr, "SHRED>ERROR 101 <encode() in core.cpp>:  Invalid or NULL Parameters\n");
     exit(EXIT_FAILURE);
   }
-
-  if (!allowed_special || allowed_special_count == 0) { return encodeOrdinary(bpe, text, result); } // if no special tokens are allowed, use encode_ordinary
-  if (!bpe->special_tokens_encoder) { return encodeOrdinary(bpe, text, result); } // if no special tokens encoder is available, fall back to ordinary encoding
-  tokenArrayClear(result);  
+  if (!allowed_special || allowed_special_count == 0) { return encodeOrdinary(bpe, text, result); }
+  if (!bpe->special_tokens_encoder) { return encodeOrdinary(bpe, text, result); }
+  tokenArrayClear(result);
   const char* current = text;
   size_t text_len = strlen(text);
-  while (current < text + text_len) {
+  const char* text_end = text + text_len;
+  while (current < text_end) {
     const char* next_special = NULL;
     size_t special_len = 0;
     Rank special_token = 0;
-    for (size_t i = 0; i < allowed_special_count; i++) {    // checking for allowed special tokens at current position
+    for (size_t i = 0; i < allowed_special_count; i++) {
       size_t token_len = strlen(allowed_special[i]);
-      if (current + token_len <= text + text_len && 
-          strncmp(current, allowed_special[i], token_len) == 0) {
-        if (!next_special || current < next_special) {  // found a special token, check if it's the earliest one
+      if (current + token_len <= text_end && strncmp(current, allowed_special[i], token_len) == 0) {
+        if (!next_special || current < next_special) {
           next_special = current;
           special_len = token_len;
-          if (!strmapGet(bpe->special_tokens_encoder, allowed_special[i], &special_token)) continue;  // Special token not found in encoder, skip it
+          if (!strmapGet(bpe->special_tokens_encoder, allowed_special[i], &special_token)) continue;
         }
       }
     }
-
-    if (next_special == current) {  // encode the special token
+    if (next_special == current) {
       tokenArrayPush(result, special_token);
       current += special_len;
-    } else {  // find the next special token in the remaining text
+    } else {
       const char* next_occurrence = NULL;
       size_t next_occurrence_len = 0;
       for (size_t i = 0; i < allowed_special_count; i++) {
@@ -161,20 +138,37 @@ void encode(CoreBPE* bpe, const char* text, char** allowed_special, size_t allow
           next_occurrence_len = strlen(allowed_special[i]);
         }
       }
-
-      // encode ordinary text up to the next special token (or end of string)
-      const char* end_pos = next_occurrence ? next_occurrence : (text + text_len);
+      const char* end_pos = next_occurrence ? next_occurrence : text_end;
       size_t ordinary_len = end_pos - current;
       if (ordinary_len > 0) {
-        char* ordinary_text = (char*)malloc(ordinary_len + 1);
-        if (!ordinary_text) {
+        TokenArray temp_result = {NULL, 0, 0};
+        temp_result.tokens = (Rank*)malloc(sizeof(Rank) * 128);
+        if (!temp_result.tokens) {
           fprintf(stderr, "SHRED>ERROR 102 <encode() in core.cpp>:  Couldn't allocate memory\n");
           exit(EXIT_FAILURE);
         }
-        memcpy(ordinary_text, current, ordinary_len);
-        ordinary_text[ordinary_len] = '\0';
-        encodeOrdinary(bpe, ordinary_text, result);
-        free(ordinary_text);
+        temp_result.capacity = 128;
+        temp_result.count = 0;
+        size_t* matches = NULL;
+        size_t match_count = 0;
+        char saved_char = *end_pos;
+        *((char*)end_pos) = '\0';
+        findRegexMatches(bpe->regex, current, &matches, &match_count);
+        *((char*)end_pos) = saved_char;
+        for (size_t i = 0; i < match_count; i += 2) {
+          size_t start = matches[i];
+          size_t end = matches[i + 1];
+          if (current + start >= end_pos) break;
+          if (current + end > end_pos) end = end_pos - current;
+          size_t piece_len = end - start;
+          uint8_t* piece = (uint8_t*)(current + start);
+          Rank token;
+          if (hashmapGet(bpe->encoder, piece, piece_len, &token)) { tokenArrayPush(&temp_result, token); }
+          else { bytePairEncodeInternal(piece, piece_len, bpe->encoder, &temp_result); }
+        }
+        for (size_t i = 0; i < temp_result.count; i++) tokenArrayPush(result, temp_result.tokens[i]);
+        free(temp_result.tokens);
+        free(matches);
         current = end_pos;
       }
     }
@@ -195,9 +189,9 @@ void encodeSingleToken(CoreBPE* bpe, const uint8_t* piece, size_t piece_len, Ran
     fprintf(stderr, "SHRED>ERROR 101 <encodeSingleToken() in core.cpp>:  Invalid or NULL Parameters\n");
     exit(EXIT_FAILURE);
   }
-  if (hashmapGet(bpe->encoder, (uint8_t*)piece, piece_len, result)) return; // try regular encoder first
-  if (bpe->special_tokens_encoder) {  // try special tokens encoder if available
-    char* piece_str = (char*)malloc(piece_len + 1); // converting to null-terminated string for special token lookup
+  if (hashmapGet(bpe->encoder, (uint8_t*)piece, piece_len, result)) return;
+  if (bpe->special_tokens_encoder) {
+    char* piece_str = (char*)malloc(piece_len + 1);
     if (!piece_str) {
       fprintf(stderr, "SHRED>ERROR 102 <encodeSingleToken() in core.cpp>:  Couldn't allocate memory\n");
       exit(EXIT_FAILURE);
@@ -216,51 +210,61 @@ void encodeSinglePiece(CoreBPE* bpe, const uint8_t* piece, size_t piece_len, Tok
     exit(EXIT_FAILURE);
   }
   tokenArrayClear(result);
-  Rank token;   // trying direct lookup first
+  Rank token;
   if (hashmapGet(bpe->encoder, (uint8_t*)piece, piece_len, &token)) { return tokenArrayPush(result, token); }
-  return bytePairEncodeInternal(piece, piece_len, bpe->encoder, result); // Use BPE encoding
+  return bytePairEncodeInternal(piece, piece_len, bpe->encoder, result);
 }
 
-// Decode tokens to bytes
 void decodeBytes(CoreBPE* bpe, const Rank* tokens, size_t token_count, ByteArray* result) {
   if (!bpe || !tokens || !result) {
     fprintf(stderr, "SHRED>ERROR 101 <decodeBytes() in core.cpp>:  Invalid or NULL Parameters\n");
     exit(EXIT_FAILURE);
   }
   byteArrayClear(result);
+  if (token_count == 0) return;
+  size_t capacity = DECODE_BUFFER_INIT;
+  uint8_t* bytes = (uint8_t*)malloc(capacity);
+  if (!bytes) {
+    fprintf(stderr, "SHRED>ERROR 102 <decodeBytes() in core.cpp>:  Couldn't allocate memory\n");
+    exit(EXIT_FAILURE);
+  }
+  size_t len = 0;
   for (size_t i = 0; i < token_count; i++) {
     uint8_t* token_bytes = NULL; size_t token_len = 0;
-    // trying regular decoder first
-    if (revmapGet(bpe->decoder, tokens[i], &token_bytes, &token_len)) { // Extend result array
-      size_t new_len = result->len + token_len;
-      uint8_t* new_bytes = (uint8_t*)realloc(result->bytes, new_len);
-      if (!new_bytes) {
-        fprintf(stderr, "SHRED>ERROR 102 <decodeBytes() in core.cpp>:  Couldn't allocate memory\n");
-        exit(EXIT_FAILURE);
+    if (revmapGet(bpe->decoder, tokens[i], &token_bytes, &token_len)) {
+      if (len + token_len > capacity) {
+        while (len + token_len > capacity) capacity *= 2;
+        uint8_t* new_bytes = (uint8_t*)realloc(bytes, capacity);
+        if (!new_bytes) {
+          free(bytes);
+          fprintf(stderr, "SHRED>ERROR 102 <decodeBytes() in core.cpp>:  Couldn't allocate memory\n");
+          exit(EXIT_FAILURE);
+        }
+        bytes = new_bytes;
       }
-      memcpy(new_bytes + result->len, token_bytes, token_len);
-      result->bytes = new_bytes;
-      result->len = new_len;
+      memcpy(bytes + len, token_bytes, token_len);
+      len += token_len;
       continue;
     }
-
-    // tryinh special tokens decoder
     if (bpe->special_tokens_decoder && revmapGet(bpe->special_tokens_decoder, tokens[i], &token_bytes, &token_len)) {
-      size_t new_len = result->len + token_len; uint8_t* new_bytes = (uint8_t*)realloc(result->bytes, new_len);
-      if (!new_bytes) {
-        fprintf(stderr, "SHRED>ERROR 102 <decodeBytes() in core.cpp>:  Couldn't allocate memory\n");
-        exit(EXIT_FAILURE);
+      if (len + token_len > capacity) {
+        while (len + token_len > capacity) capacity *= 2;
+        uint8_t* new_bytes = (uint8_t*)realloc(bytes, capacity);
+        if (!new_bytes) {
+          free(bytes);
+          fprintf(stderr, "SHRED>ERROR 102 <decodeBytes() in core.cpp>:  Couldn't allocate memory\n");
+          exit(EXIT_FAILURE);
+        }
+        bytes = new_bytes;
       }
-
-      memcpy(new_bytes + result->len, token_bytes, token_len);
-      result->bytes = new_bytes;
-      result->len = new_len;
-      continue;
+      memcpy(bytes + len, token_bytes, token_len);
+      len += token_len;
     }
   }
+  result->bytes = bytes;
+  result->len = len;
 }
 
-// Decode single token to bytes
 void decodeSingleTokenBytes(CoreBPE* bpe, Rank token, ByteArray* result) {
   if (!bpe || !result) {
     fprintf(stderr, "SHRED>ERROR 101 <decodeSingleTokenBytes() in core.cpp>:  Invalid or NULL Parameters\n");
@@ -268,8 +272,6 @@ void decodeSingleTokenBytes(CoreBPE* bpe, Rank token, ByteArray* result) {
   }
   byteArrayClear(result);
   uint8_t* token_bytes = NULL; size_t token_len = 0;
-
-  // trying regular decoder first
   if (revmapGet(bpe->decoder, token, &token_bytes, &token_len)) {
     result->bytes = (uint8_t*)malloc(token_len);
     if (!result->bytes) {
@@ -278,9 +280,8 @@ void decodeSingleTokenBytes(CoreBPE* bpe, Rank token, ByteArray* result) {
     }
     memcpy(result->bytes, token_bytes, token_len);
     result->len = token_len;
+    return;
   }
-
-  // trying special tokens decoder
   if (bpe->special_tokens_decoder && revmapGet(bpe->special_tokens_decoder, token, &token_bytes, &token_len)) {
     result->bytes = (uint8_t*)malloc(token_len);
     if (!result->bytes) {
@@ -302,70 +303,13 @@ size_t getTokenCount(CoreBPE* bpe) {
   return count;
 }
 
-// Internal helper functions -----------------
-// static void compileRegex(const char* pattern, regex_t* regex) {
-//   int flags = REG_EXTENDED | REG_NEWLINE;
-//   int result = regcomp(regex, pattern, flags);
-
-//   if (result != 0) {
-//     // Linux POSIX regex doesn't support "(?: ... )"
-//     const char* fallback_pattern = "[A-Za-z]+|[0-9]+|[^A-Za-z0-9\\s]+|\\s+";
-//     fprintf(stderr, "SHRED>WARNING 104 <compileRegex()>: Falling back to POSIX-compatible regex\n");
-
-//     result = regcomp(regex, fallback_pattern, flags);
-//     if (result != 0) {
-//       char error_buffer[256];
-//       regerror(result, regex, error_buffer, sizeof(error_buffer));
-//       fprintf(stderr, "SHRED>ERROR 103 <compileRegex()> : Regex compilation failed: %s\n", error_buffer);
-//       exit(EXIT_FAILURE);
-//     }
-//   }
-// }
-
-// static void findRegexMatches(regex_t* regex, const char* text, size_t** matches, size_t* match_count) {
-//   if (!regex || !text || !matches || !match_count) {
-//     fprintf(stderr, "SHRED>ERROR 101 <findRegexMatches() in core.cpp>:  Invalid or NULL Parameters\n");
-//     exit(EXIT_FAILURE);
-//   }
-
-//   size_t capacity = 16;
-//   *matches = (size_t*)malloc(capacity * sizeof(size_t));
-//   if (!*matches) {
-//     fprintf(stderr, "SHRED>ERROR 102 <findRegexMatches() in core.cpp>:  Couldn't allocate memory\n");
-//     exit(EXIT_FAILURE);
-//   }
-
-//   *match_count = 0;
-//   regmatch_t match;
-//   const char* current = text;
-//   size_t offset = 0;
-
-//   while (regexec(regex, current, 1, &match, 0) == 0) {
-//     if (*match_count + 2 >= capacity) {
-//       capacity *= 2;
-//       size_t* new_matches = (size_t*)realloc(*matches, capacity * sizeof(size_t));
-//       if (!new_matches) {
-//         fprintf(stderr, "SHRED>ERROR 102 <findRegexMatches() in core.cpp>:  Couldn't allocate memory\n");
-//         free(*matches);
-//         exit(EXIT_FAILURE);
-//       }
-//       *matches = new_matches;
-//     }
-//     (*matches)[(*match_count)++] = offset + match.rm_so;
-//     (*matches)[(*match_count)++] = offset + match.rm_eo;
-//     if (match.rm_eo == 0) break; // Avoid infinite loop on zero-length matches 
-//     current += match.rm_eo;
-//     offset += match.rm_eo;
-//   }
-// }
-
 static void compileRegex(const char* pattern, std::regex** regex) {
   try {
-    *regex = new std::regex(pattern, std::regex::ECMAScript);
+    *regex = new std::regex(pattern, std::regex::ECMAScript | std::regex::optimize);
   } catch (const std::regex_error& e) {
     const char* fallback_pattern = "[A-Za-z]+|[0-9]+|[^A-Za-z0-9\\s]+|\\s+";
     fprintf(stderr, "SHRED>WARNING <compileRegex()>: Regex failed (%s), using fallback\n", e.what());
-    *regex = new std::regex(fallback_pattern, std::regex::ECMAScript);
+    *regex = new std::regex(fallback_pattern, std::regex::ECMAScript | std::regex::optimize);
   }
 }
 
@@ -374,15 +318,14 @@ static void findRegexMatches(std::regex* regex, const char* text, size_t** match
     fprintf(stderr, "SHRED>ERROR <findRegexMatches()>: Invalid or NULL Parameters\n");
     exit(EXIT_FAILURE);
   }
-
   std::string s(text);
   std::vector<size_t> tmp;
+  tmp.reserve(64);
   std::sregex_iterator it(s.begin(), s.end(), *regex), end;
   for (; it != end; ++it) {
     tmp.push_back(it->position());
     tmp.push_back(it->position() + it->length());
   }
-
   *match_count = tmp.size();
   if (*match_count > 0) {
     *matches = (size_t*)malloc(tmp.size() * sizeof(size_t));
@@ -405,7 +348,7 @@ static void bytePairEncodeInternal(const uint8_t* piece, size_t piece_len, HashM
   if (piece_len == 1) {
     Rank token;
     if (hashmapGet(encoder, (uint8_t*)piece, 1, &token)) { tokenArrayPush(result, token); return; }
-    tokenArrayPush(result, 0);  // Byte-level fallback - use token 0 for unknown bytes
+    tokenArrayPush(result, 0);
     return;
   }
   size_t* parts = NULL;
@@ -414,10 +357,9 @@ static void bytePairEncodeInternal(const uint8_t* piece, size_t piece_len, HashM
   for (size_t i = 0; i < parts_count - 1; i++) {
     size_t start = parts[i], end = parts[i + 1], token_len = end - start;
     Rank token;
-
     if (hashmapGet(encoder, (uint8_t*)piece + start, token_len, &token)) { tokenArrayPush(result, token); }
     else {
-      for (size_t j = start; j < end; j++) {  // Try byte-level encoding for this segment
+      for (size_t j = start; j < end; j++) {
         if (hashmapGet(encoder, (uint8_t*)piece + j, 1, &token)) { tokenArrayPush(result, token); }
         else { tokenArrayPush(result, 0); }
       }
@@ -438,29 +380,23 @@ static void bytePairMerge(HashMap* ranks, const uint8_t* piece, size_t piece_len
     exit(EXIT_FAILURE);
   }
   *parts_count = 0;
-
-  // adding all positions initially
   for (size_t i = 0; i < piece_len; i++) { (*parts)[(*parts_count)++] = i; }
-  (*parts)[(*parts_count)++] = piece_len; // end marker
+  (*parts)[(*parts_count)++] = piece_len;
   if (piece_len < 2) return;
-  // finding pairs and merge
   bool changed = true;
   while (changed && *parts_count > 2) {
     changed = false;
     Rank best_rank = C_UINT32_MAX;
     size_t best_idx = SIZE_MAX;
-
-    // finding best pair to merge
     for (size_t i = 0; i < *parts_count - 2; i++) {
       size_t start1 = (*parts)[i]; size_t end1 = (*parts)[i + 1]; size_t end2 = (*parts)[i + 2];
-      uint8_t pair[2] = {piece[start1], piece[end1]};
+      size_t pair_len = end2 - start1;
       Rank rank;
-      if (hashmapGet(ranks, pair, 2, &rank) && rank < best_rank) {
+      if (hashmapGet(ranks, piece + start1, pair_len, &rank) && rank < best_rank) {
         best_rank = rank;
         best_idx = i;
       }
     }
-
     if (best_idx != SIZE_MAX) {
       for (size_t i = best_idx + 1; i < *parts_count - 1; i++) { (*parts)[i] = (*parts)[i + 1]; }
       (*parts_count)--;
@@ -480,7 +416,6 @@ void getTokenByteValues(CoreBPE* bpe, ByteArray** results, size_t* count) {
     fprintf(stderr, "SHRED>ERROR 101 <getTokenByteValues() in core.cpp>:  Invalid or NULL Parameters\n");
     exit(EXIT_FAILURE);
   }
-
   size_t total_tokens = bpe->encoder->size;
   if (bpe->special_tokens_encoder) { total_tokens += bpe->special_tokens_encoder->size; }
   if (total_tokens == 0) return;
@@ -490,13 +425,11 @@ void getTokenByteValues(CoreBPE* bpe, ByteArray** results, size_t* count) {
     exit(EXIT_FAILURE);
   }
   size_t result_idx = 0;
-
   for (size_t i = 0; i < bpe->encoder->bucket_count; i++) {
     HashMapNode* node = bpe->encoder->buckets[i];
     while (node && result_idx < total_tokens) {
       (*results)[result_idx].bytes = (uint8_t*)malloc(node->key_len);
       if (!(*results)[result_idx].bytes) {
-
         for (size_t j = 0; j < result_idx; j++) { free((*results)[j].bytes); }
         free(*results);
         *results = NULL;
@@ -509,8 +442,6 @@ void getTokenByteValues(CoreBPE* bpe, ByteArray** results, size_t* count) {
       node = node->next;
     }
   }
-
-  // processing special tokens encoder
   if (bpe->special_tokens_encoder) {
     for (size_t i = 0; i < bpe->special_tokens_encoder->bucket_count; i++) {
       HashMapStrNode* node = bpe->special_tokens_encoder->buckets[i];
@@ -518,7 +449,6 @@ void getTokenByteValues(CoreBPE* bpe, ByteArray** results, size_t* count) {
         size_t key_len = strlen(node->key);
         (*results)[result_idx].bytes = (uint8_t*)malloc(key_len);
         if (!(*results)[result_idx].bytes) {
-
           for (size_t j = 0; j < result_idx; j++) { free((*results)[j].bytes); }
           free(*results);
           *results = NULL;
