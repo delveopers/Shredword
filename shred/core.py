@@ -1,7 +1,8 @@
+# --- patched shred front-end (tokenizer.py) ---
 import json, re, os
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Sequence
 from .cbase import lib, create_token_array, create_byte_array, create_encode_unstable_result
-from ctypes import POINTER, c_uint8, c_size_t, c_uint32, c_char_p, create_string_buffer, cast, byref, c_uint32 as ctypes_c_uint32, string_at
+from ctypes import POINTER, c_uint8, c_size_t, c_uint32, c_char_p, create_string_buffer, cast, byref, string_at
 
 BASIC_REGEX = r"'s|'t|'re|'ve|'d|'ll|'m|[A-Za-z]+|\d+|\r?\n|\s+|[^\w\s]"
 
@@ -14,27 +15,32 @@ def _get_vocab_path(encoding_name: str) -> str:
       if os.path.exists(vocab_file): return vocab_file
   raise FileNotFoundError(f"Vocab file '{encoding_name}.model' not found in any of: {vocab_dirs}")
 
+
 class Shred:
   def __init__(self):
     self.bpe, self._vocab, self._special_tokens, self._encoder, self._decoder = None, [], {}, {}, {}
-    self._encoder_buffers, self._single_byte_encoder, self._pattern, self._pattern_re = [], {}, BASIC_REGEX, re.compile(BASIC_REGEX)
+    # keeping buffers and supporting ctypes arrays as attributes to preserve lifetime
+    self._encoder_buffers, self._encoder_keys, self._encoder_key_lens, self._encoder_values, self._special_keys, self._special_values, self._pattern_buf = [], None, None, None, None, None, None
+    self._single_byte_encoder, self._pattern, self._pattern_re = {}, BASIC_REGEX, re.compile(BASIC_REGEX)
+    self._special_token_bytes: Dict[str, bytes] = {}
 
   def load_from_encoding(self, encoding_name: str, local: bool = True):
     if local:
       vocab_path = _get_vocab_path(encoding_name)
       with open(vocab_path, 'rb') as f: vocab_data = self._parse_model_file(f.read(), encoding_name)
-    else:
-      vocab_data = self._download_vocab(encoding_name)
+    else: vocab_data = self._download_vocab(encoding_name)
     self._vocab, self._special_tokens = vocab_data['vocab'], vocab_data.get('special_tokens', {})
     pattern = vocab_data.get('pattern', self._pattern)
     if pattern != self._pattern: self._pattern, self._pattern_re = pattern, re.compile(pattern)
+    # precompute special token bytes map
+    self._special_token_bytes = {tok: tok.encode('utf-8') for tok in self._special_tokens.keys()}
     self._build_mappings()
-    self._initialize_bpe(pattern)
+    self._initialize_bpe(self._pattern)
 
   def _download_vocab(self, encoding_name: str) -> Dict:
     try:
       import urllib.request
-      base_urls = [f"https://raw.githubusercontent.com/delveopers/shredword/{branch}/vocabs/{encoding_name}.model" for branch in ["main", "dev"]]
+      base_urls = [f"https://raw.githubusercontent.com/delveopers/shredword/{branch}/shred/vocabs/{encoding_name}.model" for branch in ["main", "dev"]]
       last_exc = None
       for url in base_urls:
         try:
@@ -65,8 +71,7 @@ class Shred:
     try:
       vocab_dict = json.loads(content.decode('utf-8'))
       max_rank = max(vocab_dict.values()) if vocab_dict else 0
-      vocab_list = [''] * (max_rank + 1)
-      special_tokens = {}
+      vocab_list, special_tokens = [''] * (max_rank + 1), {}
       for token_str, rank in vocab_dict.items():
         clean_token = token_str.strip('"\'')
         if 0 <= rank <= max_rank: vocab_list[rank] = clean_token
@@ -77,35 +82,58 @@ class Shred:
   def _initialize_bpe(self, pattern: str):
     if not self._encoder: raise RuntimeError("Encoder not built")
     sorted_items = sorted(self._encoder.items(), key=lambda x: x[1])
-    self._encoder_buffers = []
-    n = len(sorted_items)
-    encoder_keys, encoder_key_lens, encoder_values = (POINTER(c_uint8) * n)(), (c_size_t * n)(), (c_uint32 * n)()
+    self._encoder_buffers, n = [], len(sorted_items)
+    EncoderKeyArrayType, EncoderLensArrayType, EncoderValuesArrayType = POINTER(c_uint8) * n, c_size_t * n, c_uint32 * n
+    encoder_keys, encoder_key_lens, encoder_values = EncoderKeyArrayType(), EncoderLensArrayType(), EncoderValuesArrayType()
     for i, (token_bytes, rank) in enumerate(sorted_items):
-      buffer = create_string_buffer(token_bytes)
-      self._encoder_buffers.append(buffer)
-      encoder_keys[i], encoder_key_lens[i], encoder_values[i] = cast(buffer, POINTER(c_uint8)), len(token_bytes), rank
+      buf = create_string_buffer(token_bytes) # create_string_buffer keeps a stable buffer; store it so it lives for lifetime of tokenizer
+      self._encoder_buffers.append(buf)
+      encoder_keys[i] = cast(buf, POINTER(c_uint8))       # cast the buffer to POINTER(c_uint8)
+      encoder_key_lens[i] = len(token_bytes)
+      encoder_values[i] = rank
+    self._encoder_keys, self._encoder_key_lens, self._encoder_values = encoder_keys, encoder_key_lens, encoder_values     # keep references to arrays on self to preserve lifetime
+
     special_count = len(self._special_tokens)
     if special_count > 0:
-      special_keys, special_values = (c_char_p * special_count)(), (c_uint32 * special_count)()
-      for i, (token, rank) in enumerate(self._special_tokens.items()): special_keys[i], special_values[i] = token.encode('utf-8'), rank
-    else: special_keys, special_values = None, None
-    pattern_buf = create_string_buffer(pattern.encode('utf-8'))
-    self.bpe = lib.shredCreate(encoder_keys, encoder_key_lens, encoder_values, n, special_keys, special_values, special_count, pattern_buf)
+      SpecialKeysArray, SpecialValuesArray = c_char_p * special_count, c_uint32 * special_count
+      special_keys, special_values = SpecialKeysArray(), SpecialValuesArray()
+      # useing the precomputed bytes for special tokens
+      for i, (token, rank) in enumerate(self._special_tokens.items()):
+        special_keys[i] = self._special_token_bytes.get(token, token.encode('utf-8')) # token is str, but we have precomputed bytes
+        special_values[i] = rank
+      self._special_keys, self._special_values = special_keys, special_values
+    else:
+      self._special_keys, self._special_values = None, None
+    pattern_buf = create_string_buffer(pattern.encode('utf-8'))     # pattern buffer — cast to c_char_p and keep it alive on self
+    self._pattern_buf = pattern_buf
+    pattern_c = cast(pattern_buf, c_char_p)
+    self.bpe = lib.shredCreate(self._encoder_keys, self._encoder_key_lens, self._encoder_values, n, self._special_keys, self._special_values, special_count, pattern_c)
     if not self.bpe: raise RuntimeError("shredCreate returned NULL")
 
-  def encode(self, text: str, allowed_special: Optional[List[str]] = None) -> List[int]:
+  def encode(self, text: str, allowed_special: Optional[Sequence[str]] = None) -> List[int]:
+    """
+    If allowed_special is None -> use encode_ordinary (fast path)
+    If allowed_special is [] -> explicitly allow zero special tokens (pass None/0 to native)
+    If allowed_special == "all" -> include all known special tokens
+    """
     if not self.bpe: raise RuntimeError("Tokenizer not initialized")
-    if not allowed_special: return self.encode_ordinary(text)
-    if allowed_special == "all": allowed_special = list(self._special_tokens.keys())
-    elif isinstance(allowed_special, str): allowed_special = [allowed_special]
+    if allowed_special is None: return self.encode_ordinary(text)     # handle explicit None differently from empty list
+    if allowed_special == "all": allowed_special_list = list(self._special_tokens.keys())     # normalize allowed_special (string -> list, "all" -> all)
+    elif isinstance(allowed_special, str): allowed_special_list = [allowed_special]
+    else: allowed_special_list = list(allowed_special)
     token_array = create_token_array(lib)
     if not token_array: raise RuntimeError("Failed to create token array")
     try:
       text_bytes = text.encode('utf-8')
-      special_array = (c_char_p * len(allowed_special))(*[s.encode('utf-8') for s in allowed_special])
-      lib.encode(self.bpe, text_bytes, special_array, len(allowed_special), token_array)
+      # if allowed_special_list is empty, pass NULL and 0 (native likely handles that)
+      if len(allowed_special_list) == 0: lib.encode(self.bpe, text_bytes, None, 0, token_array)
+      else:
+        # use precomputed bytes for special tokens to avoid repeated .encode(...)
+        special_c_bytes = [self._special_token_bytes.get(s, s.encode('utf-8')) for s in allowed_special_list]
+        special_array = (c_char_p * len(special_c_bytes))(*special_c_bytes)
+        lib.encode(self.bpe, text_bytes, special_array, len(special_c_bytes), token_array)
       return [token_array.contents.tokens[i] for i in range(token_array.contents.count)]
-    except Exception: return self._fallback_encode(text, allowed_special)
+    except Exception: return self._fallback_encode(text, allowed_special_list)
     finally: lib.tokenArrayFree(token_array)
 
   def encode_ordinary(self, text: str) -> List[int]:
@@ -118,9 +146,10 @@ class Shred:
     except Exception: return self._fallback_encode(text, None)
     finally: lib.tokenArrayFree(token_array)
 
-  def _fallback_encode(self, text: str, allowed_special: Optional[List[str]]) -> List[int]:
+  def _fallback_encode(self, text: str, allowed_special: Optional[Sequence[str]]) -> List[int]:
     tokens, encoder, single_byte, stokens = [], self._encoder, self._single_byte_encoder, self._special_tokens
     if allowed_special:
+      # create a regex group for the allowed special tokens
       special_pattern = '|'.join(re.escape(token) for token in allowed_special)
       parts = re.split(f'({special_pattern})', text) if special_pattern else [text]
       for part in parts:
@@ -172,17 +201,32 @@ class Shred:
       return b"" if out_len == 0 else string_at(byte_array.contents.bytes, out_len)
     finally: lib.byteArrayFree(byte_array)
 
-  def encode_unstable(self, text: str, allowed_special: Optional[List[str]] = None):
+  def encode_unstable(self, text: str, allowed_special: Optional[Sequence[str]] = None):
     if not self.bpe: raise RuntimeError("Tokenizer not initialized")
     result = create_encode_unstable_result(lib)
+    if not result: raise RuntimeError("Failed to allocate encode_unstable result")
     try:
       text_b = text.encode('utf-8')
       if allowed_special:
-        special_array = (c_char_p * len(allowed_special))(*[s.encode('utf-8') for s in allowed_special])
-        lib.encodeWithUnstable(self.bpe, text_b, special_array, len(allowed_special), result)
+        if allowed_special == "all": allowed_special_list = list(self._special_tokens.keys())
+        elif isinstance(allowed_special, str): allowed_special_list = [allowed_special]
+        else: allowed_special_list = list(allowed_special)
+        if len(allowed_special_list) == 0: lib.encodeWithUnstable(self.bpe, text_b, None, 0, result)
+        else:
+          special_c_bytes = [self._special_token_bytes.get(s, s.encode('utf-8')) for s in allowed_special_list]
+          special_array = (c_char_p * len(special_c_bytes))(*special_c_bytes)
+          lib.encodeWithUnstable(self.bpe, text_b, special_array, len(special_c_bytes), result)
       else: lib.encodeWithUnstable(self.bpe, text_b, None, 0, result)
-      tokens = [result.contents.tokens.tokens[i] for i in range(result.contents.tokens.count)]
-      completions = [[result.contents.completions.completions[i].contents.tokens[j] for j in range(result.contents.completions.completions[i].contents.count)] for i in range(result.contents.completions.count)]
+
+      # cache locals to reduce attribute lookup overhead
+      res = result.contents
+      tokens_count = res.tokens.count
+      tokens, completions = [res.tokens.tokens[i] for i in range(tokens_count)], []
+      comp_set = res.completions
+      for i in range(comp_set.count):
+        token_arr_ptr = comp_set.completions[i].contents
+        ccount = token_arr_ptr.count
+        completions.append([token_arr_ptr.tokens[j] for j in range(ccount)])
       return {'tokens': tokens, 'completions': completions}
     finally: lib.encodeUnstableResultFree(result)
 
@@ -191,6 +235,7 @@ class Shred:
     token_array = create_token_array(lib)
     if not token_array: raise RuntimeError("Failed to create token array")
     try:
+      # keep it simple and copy into a temporary c_uint8 array; it's safe and portable
       data_ptr = (c_uint8 * len(data))(*data)
       lib.encodeBytes(self.bpe, data_ptr, len(data), token_array)
       return [token_array.contents.tokens[i] for i in range(token_array.contents.count)]
@@ -199,7 +244,7 @@ class Shred:
   def encode_single_token(self, piece: bytes) -> Optional[int]:
     if not self.bpe: raise RuntimeError("Tokenizer not initialized")
     try:
-      piece_ptr, result = (c_uint8 * len(piece))(*piece), ctypes_c_uint32()
+      piece_ptr, result = (c_uint8 * len(piece))(*piece), c_uint32()
       lib.encodeSingleToken(self.bpe, piece_ptr, len(piece), byref(result))
       return int(result.value)
     except Exception: return None
@@ -224,6 +269,7 @@ class Shred:
   def encoder(self) -> Dict[bytes, int]: return self._encoder.copy()
   @property
   def decoder(self) -> Dict[int, bytes]: return self._decoder.copy()
+
   def __del__(self):
     if self.bpe: lib.shredFree(self.bpe)
 
