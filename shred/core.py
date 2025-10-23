@@ -1,17 +1,30 @@
-import urllib.request, re, json
+import json, re, os
 from typing import List, Dict, Optional
 from .cbase import lib, create_token_array, create_byte_array, create_encode_unstable_result
 from ctypes import POINTER, c_uint8, c_size_t, c_uint32, c_char_p, create_string_buffer, cast, byref, c_uint32 as ctypes_c_uint32, string_at
 
 BASIC_REGEX = r"'s|'t|'re|'ve|'d|'ll|'m|[A-Za-z]+|\d+|\r?\n|\s+|[^\w\s]"
 
+def _get_vocab_path(encoding_name: str) -> str:
+  pkg_dir = os.path.dirname(__file__)
+  vocab_dirs = [os.path.join(pkg_dir, 'vocabs'), os.path.join(pkg_dir, '..', 'vocabs'), os.path.join(pkg_dir, '..', '..', 'vocabs')]
+  for vocab_dir in vocab_dirs:
+    if os.path.exists(vocab_dir):
+      vocab_file = os.path.join(vocab_dir, f'{encoding_name}.model')
+      if os.path.exists(vocab_file): return vocab_file
+  raise FileNotFoundError(f"Vocab file '{encoding_name}.model' not found in any of: {vocab_dirs}")
+
 class Shred:
   def __init__(self):
     self.bpe, self._vocab, self._special_tokens, self._encoder, self._decoder = None, [], {}, {}, {}
     self._encoder_buffers, self._single_byte_encoder, self._pattern, self._pattern_re = [], {}, BASIC_REGEX, re.compile(BASIC_REGEX)
 
-  def load_from_encoding(self, encoding_name: str, download: bool = True):
-    vocab_data = self._download_vocab(encoding_name) if download else self._parse_model_file(open(encoding_name, "rb").read(), encoding_name)
+  def load_from_encoding(self, encoding_name: str, local: bool = True):
+    if local:
+      vocab_path = _get_vocab_path(encoding_name)
+      with open(vocab_path, 'rb') as f: vocab_data = self._parse_model_file(f.read(), encoding_name)
+    else:
+      vocab_data = self._download_vocab(encoding_name)
     self._vocab, self._special_tokens = vocab_data['vocab'], vocab_data.get('special_tokens', {})
     pattern = vocab_data.get('pattern', self._pattern)
     if pattern != self._pattern: self._pattern, self._pattern_re = pattern, re.compile(pattern)
@@ -19,13 +32,17 @@ class Shred:
     self._initialize_bpe(pattern)
 
   def _download_vocab(self, encoding_name: str) -> Dict:
-    base_urls = [f"https://raw.githubusercontent.com/delveopers/shredword/{branch}/vocabs/{encoding_name}.model" for branch in ["main", "dev"]]
-    last_exc = None
-    for url in base_urls:
-      try:
-        with urllib.request.urlopen(url) as response: return self._parse_model_file(response.read(), encoding_name)
-      except Exception as e: last_exc = e; continue
-    raise ValueError(f"Failed to load encoding '{encoding_name}' from any source: {last_exc}")
+    try:
+      import urllib.request
+      base_urls = [f"https://raw.githubusercontent.com/delveopers/shredword/{branch}/vocabs/{encoding_name}.model" for branch in ["main", "dev"]]
+      last_exc = None
+      for url in base_urls:
+        try:
+          with urllib.request.urlopen(url) as response: return self._parse_model_file(response.read(), encoding_name)
+        except Exception as e: last_exc = e; continue
+      raise ValueError(f"Failed to load encoding '{encoding_name}' from any source: {last_exc}")
+    except ImportError:
+      raise RuntimeError("urllib not available and local vocab not found. Install package properly or provide vocab file.")
 
   def _build_mappings(self):
     encoder, decoder, single_byte = {}, {}, {}
@@ -210,7 +227,7 @@ class Shred:
   def __del__(self):
     if self.bpe: lib.shredFree(self.bpe)
 
-def load_encoding(encoding_name: str, download: bool = True) -> Shred:
+def load_encoding(encoding_name: str, local: bool = True) -> Shred:
   tokenizer = Shred()
-  tokenizer.load_from_encoding(encoding_name, download)
+  tokenizer.load_from_encoding(encoding_name, local)
   return tokenizer
