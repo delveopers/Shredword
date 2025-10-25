@@ -53,7 +53,7 @@ We welcome contributions! Please feel free to submit issues, feature requests, o
 ### Development Setup
 
 1. Clone the repository
-2. Install development dependencies: `pip install -r requirements.txt`
+2. Install development dependencies: `pip install -r requirements.txt` (there are none!)
 3. Run tests: `python -m pytest`
 
 ### Guidelines
@@ -71,11 +71,3 @@ This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENS
 
 - **Issues**: Report bugs or request features on [GitHub Issues](https://github.com/delveopers/shredword/issues)
 - **Discussions**: Join community discussions on [GitHub Discussions](https://github.com/delveopers/shredword/discussions)
-
-## Acknowledgments
-
-Built with performance and simplicity in mind for the NLP community.
-
----
-
-**Note**: This library requires a C/CPP compiler for optimal performance. Fallback Python implementations are available when C/CPP extensions are not available.
