@@ -1,8 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
 
-if(WIN32 AND NOT DEFINED CMAKE_GENERATOR)
-  set(CMAKE_GENERATOR "Ninja")
-endif()
 project(shredword LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
