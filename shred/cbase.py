@@ -26,6 +26,9 @@ class EncodeUnstableResult(Structure): _fields_ = [("tokens", TokenArray), ("com
 class ByteArray(Structure): _fields_ = [("bytes", POINTER(c_uint8)), ("len", c_size_t)]
 class CoreBPE(Structure): _fields_ = [("encoder", c_void_p), ("special_tokens_encoder", c_void_p), ("decoder", c_void_p), ("special_tokens_decoder", c_void_p), ("regex", c_void_p), ("special_regex", c_void_p), ("sorted_token_bytes", c_void_p)]
 
+class Tokens(Structure): _fields_ = [("items", POINTER(c_char_p)), ("count", c_int), ("cap", c_int)]
+class Vocab(Structure): _fields_ = [("words", POINTER(c_char_p)), ("ht_keys", POINTER(c_char_p)), ("counts", POINTER(c_int)), ("df", POINTER(c_int)), ("ht_vals", POINTER(c_int)), ("size", c_int), ("cap", c_int), ("docs", c_int), ("ht_cap", c_int), ("ht_size", c_int)]
+
 def _setup_func(name, argtypes, restype):
   func = getattr(lib, name)
   func.argtypes, func.restype = argtypes, restype
@@ -42,6 +45,11 @@ _funcs = {
   'completionSetCreate': ([c_size_t], POINTER(CompletionSet)), 'completionSetFree': ([POINTER(CompletionSet)], None), 'completionSetAdd': ([POINTER(CompletionSet), POINTER(TokenArray)], None), 'encodeUnstableResultCreate': ([], POINTER(EncodeUnstableResult)), 'encodeUnstableResultFree': ([POINTER(EncodeUnstableResult)], None),
   'byteArrayCreate': ([c_size_t], POINTER(ByteArray)), 'byteArrayFree': ([POINTER(ByteArray)], None), 'byteArrayClear': ([POINTER(ByteArray)], None),
   'sortedTokensCreate': ([], POINTER(SortedTokens)), 'sortedTokensFree': ([POINTER(SortedTokens)], None), 'sortedTokensAdd': ([POINTER(SortedTokens), POINTER(c_uint8), c_size_t], None), 'sortedTokensSort': ([POINTER(SortedTokens)], None), 'sortedTokensFindPrefix': ([POINTER(SortedTokens), POINTER(c_uint8), c_size_t], c_size_t),
+  'tokenize': ([c_char_p], Tokens), 'free_tokens': ([POINTER(Tokens)], None),
+  'vocab_create': ([], POINTER(Vocab)), 'vocab_free': ([POINTER(Vocab)], None), 'vocab_lookup': ([POINTER(Vocab), c_char_p], c_int), 'vocab_add': ([POINTER(Vocab), c_char_p], c_int),
+  'vocab_add_document': ([POINTER(Vocab), POINTER(c_char_p), c_int], None), 'encode_ids': ([POINTER(Vocab), POINTER(c_char_p), c_int, POINTER(c_int)], POINTER(c_int)),
+  'encode_tfidf_dense': ([POINTER(Vocab), POINTER(c_char_p), c_int], POINTER(c_float)), 'encode_tfidf_sparse': ([POINTER(Vocab), POINTER(c_char_p), c_int, POINTER(POINTER(c_int)), POINTER(POINTER(c_float)), POINTER(c_int)], None),
+  'vocab_save': ([POINTER(Vocab), c_char_p], c_char_p), 'vocab_load': ([POINTER(POINTER(Vocab)), c_char_p], c_char_p), 'free_buffer': ([c_void_p], None),
 }
 
 for name, (argtypes, restype) in _funcs.items(): _setup_func(name, argtypes, restype)
