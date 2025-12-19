@@ -4,13 +4,13 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "shredword"
-version = "0.1.1"
-description = "fast bpe tokenizer used for experimental models"
+version = "0.1.2"
+description = "fast bpe, unigram & word tokenizer for experimental models"
 readme = "README.md"
 license = {file = "LICENSE"}
 authors = [{name = "Shivendra S", email = "shivharsh44@gmail.com"}]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
