@@ -10,6 +10,8 @@ A fast and efficient tokenizer library for natural language processing tasks, bu
 - **Special Tokens**: Built-in support for special tokens and custom vocabularies
 - **Fallback Mechanisms**: Robust error handling with fallback tokenization
 - **BPE Support**: Byte Pair Encoding implementation for subword tokenization
+- **Word Tokenization**: Fast word-level tokenization with contraction handling
+- **TF-IDF Embeddings**: Built-in TF-IDF vectorization with dense and sparse representations
 
 ## Installation
 
@@ -19,23 +21,44 @@ pip install shredword
 
 ## Quick Start
 
+### BPE Tokenization
+
 ```python
 from shred import load_encoding
 
-# Load a tokenizer
 tokenizer = load_encoding("pre_16k")
 
-# Encode text to tokens
 tokens = tokenizer.encode("Hello, world!")
-print(tokens)  # [10478, 10408, 10416, 10416, ...
+print(tokens)
 
-# Decode tokens back to text
 text = tokenizer.decode(tokens)
-print(text)  # "Hello, world!"
+print(text)
 
-# Get vocabulary information
 print(f"Vocabulary size: {tokenizer.vocab_size}")
 print(f"Special tokens: {tokenizer.special_tokens}")
+```
+
+### Word Tokenization & TF-IDF Embeddings
+
+```python
+from shred import WordTokenizer, TfidfEmbedding
+
+tokenizer = WordTokenizer()
+tokens = tokenizer.tokenize("Hello, world! This is a test.")
+print(tokens)
+
+embedding = TfidfEmbedding()
+embedding.add_documents([
+  "The quick brown fox jumps over the lazy dog",
+  "Python programming is fun and exciting"
+])
+
+ids = embedding.encode_ids("The lazy fox")
+dense_vec = embedding.encode_tfidf_dense("The lazy fox")
+indices, values = embedding.encode_tfidf_sparse("The lazy fox")
+
+embedding.save("vocab.txt")
+loaded = TfidfEmbedding.load("vocab.txt")
 ```
 
 ## Documentation
